@@ -1,9 +1,12 @@
 import Foundation
 import Combine
 import FirebaseAuth
+import FirebaseFirestore
 
 @MainActor
 final class AuthViewModel: ObservableObject {
+    private static let rememberMeKey = "remember_me"
+
     @Published private(set) var isSignedIn = false
     @Published private(set) var currentUserId: String?
     @Published var isLoading = false
@@ -13,6 +16,7 @@ final class AuthViewModel: ObservableObject {
     @Published var signUpSuccess = false
 
     private var authListener: AuthStateDidChangeListenerHandle?
+    private var isFirstAuthChange = true
 
     init() {
         startListening()
@@ -24,21 +28,43 @@ final class AuthViewModel: ObservableObject {
         }
     }
 
+    var savedRememberMe: Bool {
+        UserDefaults.standard.string(forKey: Self.rememberMeKey) == "true"
+    }
+
     func startListening() {
         authListener = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             Task { @MainActor [weak self] in
-                self?.isSignedIn = user != nil
-                self?.currentUserId = user?.uid
+                guard let self else { return }
+
+                let isFirstLoad = self.isFirstAuthChange
+                self.isFirstAuthChange = false
+
+                if user != nil, isFirstLoad {
+                    let remember = UserDefaults.standard.string(forKey: Self.rememberMeKey)
+                    if remember == "false" {
+                        UserDefaults.standard.removeObject(forKey: Self.rememberMeKey)
+                        try? Auth.auth().signOut()
+                        self.isSignedIn = false
+                        self.currentUserId = nil
+                        return
+                    }
+                }
+
+                self.isSignedIn = user != nil
+                self.currentUserId = user?.uid
             }
         }
     }
 
-    func signIn(email: String, password: String) {
+    func signIn(email: String, password: String, rememberMe: Bool) {
         let trimmedEmail = email.trimmingCharacters(in: .whitespaces).lowercased()
         guard !trimmedEmail.isEmpty, !password.isEmpty else {
             showError("Please enter both email and password")
             return
         }
+
+        UserDefaults.standard.set(rememberMe ? "true" : "false", forKey: Self.rememberMeKey)
 
         isLoading = true
         Auth.auth().signIn(withEmail: trimmedEmail, password: password) { [weak self] _, error in
@@ -56,6 +82,7 @@ final class AuthViewModel: ObservableObject {
         fullName: String,
         email: String,
         company: String,
+        countryDialCode: String,
         phoneNumber: String,
         password: String,
         confirmPassword: String,
@@ -65,6 +92,8 @@ final class AuthViewModel: ObservableObject {
         let trimmedEmail = email.trimmingCharacters(in: .whitespaces).lowercased()
         let trimmedCompany = company.trimmingCharacters(in: .whitespaces)
         let trimmedPhone = phoneNumber.trimmingCharacters(in: .whitespaces)
+        let trimmedDialCode = countryDialCode.trimmingCharacters(in: .whitespaces)
+        let fullPhone = trimmedDialCode.isEmpty ? trimmedPhone : "\(trimmedDialCode) \(trimmedPhone)"
 
         if trimmedName.isEmpty { showError("Please enter your full name"); return }
         if trimmedEmail.isEmpty { showError("Please enter your email address"); return }
@@ -88,14 +117,37 @@ final class AuthViewModel: ObservableObject {
                     return
                 }
 
-                let changeRequest = result?.user.createProfileChangeRequest()
-                changeRequest?.displayName = trimmedName
-                changeRequest?.commitChanges(completion: nil)
+                guard let user = result?.user else { return }
 
-                self.signUpSuccess = true
-                self.alertTitle = "Success"
-                self.alertMessage = "Account created successfully!"
-                self.showAlert = true
+                let changeRequest = user.createProfileChangeRequest()
+                changeRequest.displayName = trimmedName
+                changeRequest.commitChanges(completion: nil)
+
+                let db = Firestore.firestore()
+                db.collection("users").document(user.uid).setData([
+                    "name": trimmedName,
+                    "email": trimmedEmail,
+                    "company": trimmedCompany,
+                    "phone": fullPhone,
+                    "country": "",
+                    "isOnline": false,
+                    "currentTask": "",
+                    "taeList": [],
+                    "admin": false,
+                    "createdAt": Timestamp(date: Date())
+                ]) { firestoreError in
+                    Task { @MainActor [weak self] in
+                        guard let self else { return }
+                        if let firestoreError {
+                            self.showError(firestoreError.localizedDescription)
+                            return
+                        }
+                        self.signUpSuccess = true
+                        self.alertTitle = "Success"
+                        self.alertMessage = "Account created successfully!"
+                        self.showAlert = true
+                    }
+                }
             }
         }
     }

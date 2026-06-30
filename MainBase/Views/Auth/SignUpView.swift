@@ -156,6 +156,7 @@ struct SignUpView: View {
             fullName: fullName,
             email: email,
             company: company,
+            countryDialCode: countryDialCode,
             phoneNumber: phoneNumber,
             password: password,
             confirmPassword: confirmPassword,

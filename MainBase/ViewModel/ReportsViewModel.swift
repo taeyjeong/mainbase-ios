@@ -6,6 +6,7 @@ import FirebaseFirestore
 final class ReportsViewModel: ObservableObject {
     @Published private(set) var reports: [Report] = []
     @Published private(set) var isLoading = false
+    @Published var selectedUserId: String?
 
     private let db = Firestore.firestore()
     private var usersListener: ListenerRegistration?
@@ -41,7 +42,13 @@ final class ReportsViewModel: ObservableObject {
                     } else {
                         let name = self.userNames[userId] ?? "Unknown"
                         self.reportsByUser[userId] = (self.reportsByUser[userId] ?? []).map {
-                            Report(id: $0.id, name: name, reportText: $0.reportText, timestamp: $0.timestamp)
+                            Report(
+                                id: $0.id,
+                                userId: userId,
+                                name: name,
+                                reportText: $0.reportText,
+                                timestamp: $0.timestamp
+                            )
                         }
                         self.rebuild()
                     }
@@ -64,12 +71,34 @@ final class ReportsViewModel: ObservableObject {
                     guard let ts = data["timestamp"] as? Timestamp else { return nil }
                     let reportText = data["reportText"] as? String ?? ""
                     guard !reportText.isEmpty else { return nil }
-                    return Report(id: doc.documentID, name: name, reportText: reportText, timestamp: ts.dateValue())
+                    return Report(
+                        id: doc.documentID,
+                        userId: userId,
+                        name: name,
+                        reportText: reportText,
+                        timestamp: ts.dateValue()
+                    )
                 }
                 self.reportsByUser[userId] = entries
                 self.rebuild()
             }
         }
+    }
+
+    var availablePeople: [(id: String, name: String)] {
+        userNames
+            .map { (id: $0.key, name: $0.value) }
+            .filter { id, _ in !(reportsByUser[id]?.isEmpty ?? true) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    var filteredReports: [Report] {
+        guard let selectedUserId else { return reports }
+        return reports.filter { $0.userId == selectedUserId }
+    }
+
+    var reportSections: [MonthSection<Report>] {
+        MonthGrouping.group(filteredReports) { $0.timestamp }
     }
 
     private func rebuild() {

@@ -59,7 +59,7 @@ struct SignInView: View {
                 }
                 .padding(.bottom, 24)
 
-                Button(action: { authVM.signIn(email: email, password: password) }) {
+                Button(action: { authVM.signIn(email: email, password: password, rememberMe: rememberMe) }) {
                     ZStack {
                         RoundedRectangle(cornerRadius: 12)
                             .fill(AppColors.primaryLight)
@@ -98,6 +98,9 @@ struct SignInView: View {
             Text(authVM.alertMessage)
         }
         .navigationBarHidden(true)
+        .onAppear {
+            rememberMe = authVM.savedRememberMe
+        }
     }
 }
 

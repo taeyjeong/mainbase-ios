@@ -4,6 +4,7 @@ struct ProfileSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authVM: AuthViewModel
     @StateObject private var vm = ProfileViewModel()
+    @StateObject private var historyVM = HistoryViewModel()
 
     @State private var showSignOutConfirm = false
 
@@ -18,6 +19,7 @@ struct ProfileSheetView: View {
                         VStack(spacing: 24) {
                             avatarSection
                             infoCard
+                            historySection
                             saveButton
                             signOutButton
                         }
@@ -38,7 +40,11 @@ struct ProfileSheetView: View {
                 }
             }
         }
-        .onAppear { vm.loadProfile() }
+        .onAppear {
+            vm.loadProfile()
+            historyVM.startListening()
+        }
+        .onDisappear { historyVM.stopListening() }
         .alert("Profile", isPresented: $vm.showAlert) {
             Button("OK", role: .cancel) {}
         } message: {
@@ -146,6 +152,52 @@ struct ProfileSheetView: View {
         .padding(.bottom, 16)
     }
 
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("History")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AppColors.text)
+                .padding(.bottom, 16)
+
+            if historyVM.isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else if historyVM.sections.isEmpty {
+                Text("No clock-out history yet.")
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(Array(historyVM.sections.enumerated()), id: \.offset) { index, section in
+                    if index > 0 {
+                        Divider()
+                            .padding(.vertical, 12)
+                    }
+
+                    Text(section.title)
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(AppColors.textSecondary)
+                        .padding(.bottom, 8)
+
+                    ForEach(section.items) { entry in
+                        HistoryRow(entry: entry)
+                        if entry.id != section.items.last?.id {
+                            Divider()
+                                .padding(.vertical, 8)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(AppColors.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+        )
+    }
+
     private var saveButton: some View {
         Button(action: { vm.saveProfile() }) {
             ZStack {
@@ -182,6 +234,38 @@ struct ProfileSheetView: View {
                     .fill(AppColors.cardBackground)
                     .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.red.opacity(0.3), lineWidth: 1))
             )
+        }
+    }
+}
+
+private struct HistoryRow: View {
+    let entry: HistoryEntry
+
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(Self.dateFormatter.string(from: entry.clockOut))
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundColor(AppColors.text)
+                Spacer()
+                Text(entry.durationFormatted)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundColor(AppColors.primary)
+            }
+
+            if !entry.report.isEmpty {
+                Text(entry.report)
+                    .font(.system(size: 13))
+                    .foregroundColor(AppColors.textSecondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
         }
     }
 }

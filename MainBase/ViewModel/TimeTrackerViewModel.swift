@@ -56,12 +56,14 @@ final class TimeTrackerViewModel: ObservableObject {
 
     func clockOut(report: String) async {
         guard let uid = userId, let start = clockInTime else { return }
+        let trimmedReport = report.trimmingCharacters(in: .whitespaces)
+        guard !trimmedReport.isEmpty else { return }
+
         isSaving = true
         let now = Date()
         let durationMs = Int64(now.timeIntervalSince(start) * 1000)
         let hours = Int(now.timeIntervalSince(start)) / 3600
         let minutes = (Int(now.timeIntervalSince(start)) % 3600) / 60
-        let trimmedReport = report.trimmingCharacters(in: .whitespaces)
         do {
             try await db.collection("users").document(uid).updateData([
                 "isOnline": false,
