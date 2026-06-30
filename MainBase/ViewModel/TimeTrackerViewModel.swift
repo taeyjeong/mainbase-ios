@@ -61,6 +61,7 @@ final class TimeTrackerViewModel: ObservableObject {
         let durationMs = Int64(now.timeIntervalSince(start) * 1000)
         let hours = Int(now.timeIntervalSince(start)) / 3600
         let minutes = (Int(now.timeIntervalSince(start)) % 3600) / 60
+        let trimmedReport = report.trimmingCharacters(in: .whitespaces)
         do {
             try await db.collection("users").document(uid).updateData([
                 "isOnline": false,
@@ -72,9 +73,15 @@ final class TimeTrackerViewModel: ObservableObject {
                 "clockOut": Timestamp(date: now),
                 "durationMs": durationMs,
                 "durationFormatted": "\(hours)h \(minutes)m",
-                "report": report.trimmingCharacters(in: .whitespaces),
+                "report": trimmedReport,
                 "createdAt": Timestamp(date: now)
             ])
+            if !trimmedReport.isEmpty {
+                try await db.collection("users").document(uid).collection("reports").addDocument(data: [
+                    "reportText": trimmedReport,
+                    "timestamp": Timestamp(date: now)
+                ])
+            }
         } catch {}
         isSaving = false
     }

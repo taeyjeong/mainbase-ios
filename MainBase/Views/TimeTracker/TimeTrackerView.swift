@@ -2,9 +2,11 @@ import SwiftUI
 import Combine
 
 struct TimeTrackerView: View {
+    var onClockIn: () -> Void = {}
+
     @EnvironmentObject private var notificationVM: NotificationViewModel
     @EnvironmentObject private var authVM: AuthViewModel
-    @StateObject private var vm = TimeTrackerViewModel()
+    @EnvironmentObject private var vm: TimeTrackerViewModel
     @StateObject private var teamVM = TeamMemberViewModel()
 
     @State private var timerDisplay = "00:00:00"
@@ -35,7 +37,6 @@ struct TimeTrackerView: View {
         }
         .background(AppColors.background.ignoresSafeArea())
         .onAppear {
-            vm.configure()
             teamVM.startListening()
         }
         .onReceive(ticker) { now in
@@ -151,7 +152,10 @@ struct TimeTrackerView: View {
             clockOutReport = ""
             showClockOutModal = true
         } else {
-            Task { await vm.clockIn() }
+            Task {
+                await vm.clockIn()
+                onClockIn()
+            }
         }
     }
 
@@ -171,4 +175,5 @@ struct TimeTrackerView: View {
     TimeTrackerView()
         .environmentObject(NotificationViewModel())
         .environmentObject(AuthViewModel())
+        .environmentObject(TimeTrackerViewModel())
 }
