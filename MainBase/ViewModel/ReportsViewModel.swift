@@ -7,6 +7,7 @@ final class ReportsViewModel: ObservableObject {
     @Published private(set) var reports: [Report] = []
     @Published private(set) var isLoading = false
     @Published var selectedUserId: String?
+    @Published var selectedMonth: Date = MonthGrouping.startOfMonth(for: Date())
 
     private let db = Firestore.firestore()
     private var usersListener: ListenerRegistration?
@@ -97,8 +98,38 @@ final class ReportsViewModel: ObservableObject {
         return reports.filter { $0.userId == selectedUserId }
     }
 
-    var reportSections: [MonthSection<Report>] {
-        MonthGrouping.group(filteredReports) { $0.timestamp }
+    var selectedMonthTitle: String {
+        MonthGrouping.monthTitle(for: selectedMonth)
+    }
+
+    var reportsForSelectedMonth: [Report] {
+        let calendar = Calendar.current
+        return filteredReports
+            .filter { calendar.isDate($0.timestamp, equalTo: selectedMonth, toGranularity: .month) }
+            .sorted { $0.timestamp > $1.timestamp }
+    }
+
+    var canGoToNextMonth: Bool {
+        let calendar = Calendar.current
+        return !calendar.isDate(selectedMonth, equalTo: Date(), toGranularity: .month)
+    }
+
+    var canGoToPreviousMonth: Bool {
+        guard let earliest = filteredReports.map(\.timestamp).min() else { return false }
+        let earliestMonth = MonthGrouping.startOfMonth(for: earliest)
+        return selectedMonth > earliestMonth
+    }
+
+    func goToPreviousMonth() {
+        guard canGoToPreviousMonth,
+              let previous = Calendar.current.date(byAdding: .month, value: -1, to: selectedMonth) else { return }
+        selectedMonth = MonthGrouping.startOfMonth(for: previous)
+    }
+
+    func goToNextMonth() {
+        guard canGoToNextMonth,
+              let next = Calendar.current.date(byAdding: .month, value: 1, to: selectedMonth) else { return }
+        selectedMonth = MonthGrouping.startOfMonth(for: next)
     }
 
     private func rebuild() {

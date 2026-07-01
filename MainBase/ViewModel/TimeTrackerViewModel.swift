@@ -3,6 +3,7 @@ import Combine
 import SwiftUI
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseFunctions
 
 @MainActor
 final class TimeTrackerViewModel: ObservableObject {
@@ -51,6 +52,7 @@ final class TimeTrackerViewModel: ObservableObject {
             "isOnline": true,
             "clockInTime": Timestamp(date: now)
         ], merge: true)
+        await notifyClockEvent(action: "clock_in")
         isSaving = false
     }
 
@@ -84,7 +86,22 @@ final class TimeTrackerViewModel: ObservableObject {
                     "timestamp": Timestamp(date: now)
                 ])
             }
+            await notifyClockEvent(action: "clock_out", report: trimmedReport)
         } catch {}
         isSaving = false
+    }
+
+    private func notifyClockEvent(action: String, report: String? = nil) async {
+        guard let uid = userId else { return }
+        var payload: [String: Any] = ["actorUserId": uid, "action": action]
+        if let report, !report.isEmpty {
+            payload["report"] = report
+        }
+        let callable = Functions.functions().httpsCallable("createClockEventNotification")
+        do {
+            _ = try await callable.call(payload)
+        } catch {
+            // Notification failures should not block clock in/out.
+        }
     }
 }

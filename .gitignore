@@ -59,3 +59,17 @@ playground.xcworkspace
 .env
 .env.*
 *.pem
+
+# Cloud Functions
+functions/node_modules/
+
+# Service account keys — never commit these
+functions/*.json
+!functions/package.json
+!functions/package-lock.json
+
+# Firebase local cache
+.firebase/
+
+# Logs
+*.log

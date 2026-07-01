@@ -1,4 +1,5 @@
 import SwiftUI
+import FirebaseMessaging
 
 struct ContentView: View {
     @StateObject private var authVM = AuthViewModel()
@@ -40,6 +41,9 @@ struct ContentView: View {
             if let userId {
                 notificationVM.configure(userId: userId)
                 trackerVM.configure()
+                if let token = Messaging.messaging().fcmToken {
+                    PushNotificationService.saveFCMToken(token)
+                }
             } else {
                 notificationVM.stopListening()
                 trackerVM.stopListening()

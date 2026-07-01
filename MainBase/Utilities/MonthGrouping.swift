@@ -12,6 +12,15 @@ enum MonthGrouping {
         return formatter
     }()
 
+    static func startOfMonth(for date: Date, calendar: Calendar = .current) -> Date {
+        let components = calendar.dateComponents([.year, .month], from: date)
+        return calendar.date(from: components) ?? date
+    }
+
+    static func monthTitle(for date: Date) -> String {
+        titleFormatter.string(from: date)
+    }
+
     static func group<Item>(_ items: [Item], by date: (Item) -> Date) -> [MonthSection<Item>] {
         let calendar = Calendar.current
         var buckets: [Date: [Item]] = [:]

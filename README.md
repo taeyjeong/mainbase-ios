@@ -10,11 +10,9 @@ iOS app for team clock-in/out, shift reports, and notifications. Built with Swif
 
 MainBase is a SwiftUI iOS app for distributed teams to track work sessions. Team members clock in and out, submit an end-of-shift report, and see who is currently online. A shared **Reports** tab aggregates shift summaries across the team. Admins receive in-app notifications (and push, via Cloud Functions) when someone clocks in or out.
 
-MainBase is the native iOS client. It shares the same Firebase project and Firestore schema as the **lacoachoffice** React Native app in this monorepo.
-
 **Primary users**
 - **Team members** — clock in/out, write shift reports, view team status
-- **Admins** — receive clock-event notifications; manage team data via lacoachoffice web/mobile tools
+- **Admins** — receive clock-event notifications; manage team data via web/mobile tools
 
 ---
 
