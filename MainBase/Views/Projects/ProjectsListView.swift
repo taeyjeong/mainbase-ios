@@ -1,0 +1,111 @@
+import SwiftUI
+
+struct ProjectsListView: View {
+    @StateObject private var vm = ProjectsViewModel()
+    @State private var showingAddProject = false
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if vm.isLoadingProjects && vm.projects.isEmpty {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else if vm.projects.isEmpty {
+                    emptyState
+                } else {
+                    List {
+                        ForEach(vm.projects) { project in
+                            NavigationLink(value: project.id) {
+                                ProjectRow(project: project)
+                            }
+                            .listRowBackground(AppColors.cardBackground)
+                        }
+                    }
+                    .listStyle(.plain)
+                    .listRowSeparatorTint(AppColors.border)
+                    .refreshable { await vm.loadProjects() }
+                }
+            }
+            .background(AppColors.background.ignoresSafeArea())
+            .navigationTitle("Projects")
+            .navigationDestination(for: String.self) { projectId in
+                if let project = vm.projects.first(where: { $0.id == projectId }) {
+                    ProjectDetailView(project: project, vm: vm)
+                }
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showingAddProject = true
+                    } label: {
+                        Image(systemName: "plus")
+                    }
+                }
+            }
+        }
+        .task { await vm.loadProjects() }
+        .sheet(isPresented: $showingAddProject) {
+            AddProjectSheet(vm: vm)
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "folder")
+                .font(.system(size: 36))
+                .foregroundColor(AppColors.textSecondary)
+            Text("No projects yet")
+                .font(.system(size: 15))
+                .foregroundColor(AppColors.textSecondary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+private struct ProjectRow: View {
+    let project: Project
+
+    private var completedTaskCount: Int {
+        project.tasks.filter { $0.isCompleted }.count
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .top) {
+                Text(project.projectTitle)
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(AppColors.text)
+                Spacer()
+                StatusBadge(status: project.status)
+            }
+            if !project.projectDescription.isEmpty {
+                Text(project.projectDescription)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.textSecondary)
+                    .lineLimit(2)
+            }
+            Text("\(completedTaskCount)/\(project.tasks.count) tasks complete")
+                .font(.system(size: 13))
+                .foregroundColor(AppColors.textSecondary)
+        }
+        .padding(.vertical, 8)
+    }
+}
+
+struct StatusBadge: View {
+    let status: ProjectStatus
+
+    var body: some View {
+        Text(status == .completed ? "Completed" : "In Progress")
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(status == .completed ? .white : AppColors.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .background(status == .completed ? AppColors.primary : AppColors.primary.opacity(0.12))
+            .clipShape(Capsule())
+    }
+}
+
+#Preview {
+    ProjectsListView()
+}

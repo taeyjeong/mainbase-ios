@@ -24,6 +24,10 @@ struct ContentView: View {
                         .environmentObject(authVM)
                         .tabItem { Label("Reports", systemImage: "doc.text.fill") }
                         .tag(AppTab.reports)
+
+                    ProjectsListView()
+                        .tabItem { Label("Projects", systemImage: "folder.fill") }
+                        .tag(AppTab.projects)
                 }
                 .onChange(of: trackerVM.isClockedIn) { _, isClockedIn in
                     guard !didSetInitialTab else { return }
