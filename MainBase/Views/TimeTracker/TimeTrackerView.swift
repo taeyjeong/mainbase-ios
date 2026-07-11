@@ -29,7 +29,10 @@ struct TimeTrackerView: View {
             ScrollView(showsIndicators: false) {
                 VStack(spacing: 24) {
                     clockCard
-                    TeamMembersSection(members: teamVM.members, isLoading: teamVM.isLoading)
+                    if vm.isAdmin || vm.isClockedIn {
+                        TeamMembersSection(members: teamVM.members, isLoading: teamVM.isLoading)
+                    }
+                    ReportsListView()
                 }
                 .padding(.horizontal, 20)
                 .padding(.bottom, 40)
@@ -107,37 +110,38 @@ struct TimeTrackerView: View {
 
     private var clockCard: some View {
         Button(action: handleClockToggle) {
-            VStack(spacing: 12) {
+            HStack(spacing: 16) {
                 ZStack {
                     Circle()
                         .fill(AppColors.cardBackground)
-                        .frame(width: 60, height: 60)
+                        .frame(width: 44, height: 44)
                     RoundedRectangle(cornerRadius: 2)
                         .fill(vm.isClockedIn ? AppColors.primary : AppColors.textSecondary)
-                        .frame(width: 4, height: 28)
-                        .offset(y: -4)
+                        .frame(width: 3, height: 20)
+                        .offset(y: -3)
                 }
 
-                Text(vm.isClockedIn ? "Clocked In" : "Clocked Out")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(AppColors.cardBackground)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(timerDisplay)
+                        .font(.system(size: 32, weight: .heavy))
+                        .foregroundColor(AppColors.cardBackground)
+                        .monospacedDigit()
+                        .kerning(1)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
 
-                Text(timerDisplay)
-                    .font(.system(size: 52, weight: .heavy))
-                    .foregroundColor(AppColors.cardBackground)
-                    .monospacedDigit()
-                    .kerning(2)
-
-                if vm.isSaving {
-                    ProgressView().tint(AppColors.cardBackground)
-                } else {
-                    Text(vm.isClockedIn ? "Tap to Clock Out" : "Tap to Clock In")
-                        .font(.system(size: 13))
-                        .foregroundColor(AppColors.cardBackground.opacity(0.9))
+                    if vm.isSaving {
+                        ProgressView().tint(AppColors.cardBackground)
+                    } else {
+                        Text(vm.isClockedIn ? "Clocked In · Tap to Clock Out" : "Clocked Out · Tap to Clock In")
+                            .font(.system(size: 13))
+                            .foregroundColor(AppColors.cardBackground.opacity(0.9))
+                    }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 32)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
             .background(
                 RoundedRectangle(cornerRadius: 20)
                     .fill(vm.isClockedIn ? AppColors.primary : AppColors.textSecondary)

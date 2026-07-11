@@ -4,55 +4,33 @@ struct ReportsListView: View {
     @StateObject private var vm = ReportsViewModel()
 
     var body: some View {
-        VStack(spacing: 0) {
+        VStack(alignment: .leading, spacing: 0) {
             header
 
             if vm.isLoading {
-                Spacer()
                 ProgressView()
-                Spacer()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
             } else if vm.filteredReports.isEmpty {
-                Spacer()
-                VStack(spacing: 8) {
-                    Image(systemName: "doc.text")
-                        .font(.system(size: 36))
-                        .foregroundColor(AppColors.textSecondary)
-                    Text(vm.selectedUserId == nil ? "No reports yet" : "No reports for this person")
-                        .font(.system(size: 15))
-                        .foregroundColor(AppColors.textSecondary)
-                }
-                Spacer()
+                emptyState(message: vm.selectedUserId == nil ? "No reports yet" : "No reports for this person")
             } else {
                 monthNavigator
-                    .padding(.horizontal, 20)
                     .padding(.bottom, 12)
 
                 if vm.reportsForSelectedMonth.isEmpty {
-                    Spacer()
-                    VStack(spacing: 8) {
-                        Image(systemName: "doc.text")
-                            .font(.system(size: 36))
-                            .foregroundColor(AppColors.textSecondary)
-                        Text(emptyMonthMessage)
-                            .font(.system(size: 15))
-                            .foregroundColor(AppColors.textSecondary)
-                            .multilineTextAlignment(.center)
-                    }
-                    .padding(.horizontal, 20)
-                    Spacer()
+                    emptyState(message: emptyMonthMessage)
                 } else {
-                    List {
+                    VStack(spacing: 0) {
                         ForEach(vm.reportsForSelectedMonth) { report in
                             ReportRow(report: report)
-                                .listRowBackground(AppColors.cardBackground)
+                            if report.id != vm.reportsForSelectedMonth.last?.id {
+                                Divider()
+                            }
                         }
                     }
-                    .listStyle(.plain)
-                    .listRowSeparatorTint(AppColors.border)
                 }
             }
         }
-        .background(AppColors.background.ignoresSafeArea())
         .contentShape(Rectangle())
         .gesture(monthSwipeGesture)
         .onAppear { vm.startListening() }
@@ -60,6 +38,20 @@ struct ReportsListView: View {
         .onChange(of: vm.selectedUserId) { _, _ in
             vm.selectedMonth = MonthGrouping.startOfMonth(for: Date())
         }
+    }
+
+    private func emptyState(message: String) -> some View {
+        VStack(spacing: 8) {
+            Image(systemName: "doc.text")
+                .font(.system(size: 30))
+                .foregroundColor(AppColors.textSecondary)
+            Text(message)
+                .font(.system(size: 14))
+                .foregroundColor(AppColors.textSecondary)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 24)
     }
 
     private var emptyMonthMessage: String {
@@ -137,10 +129,7 @@ struct ReportsListView: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
         .padding(.bottom, 16)
-        .background(AppColors.background)
     }
 }
 

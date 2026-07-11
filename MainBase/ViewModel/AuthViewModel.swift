@@ -134,6 +134,7 @@ final class AuthViewModel: ObservableObject {
                     "currentTask": "",
                     "taeList": [],
                     "admin": false,
+                    "isEmployed": true,
                     "createdAt": Timestamp(date: Date())
                 ]) { firestoreError in
                     Task { @MainActor [weak self] in

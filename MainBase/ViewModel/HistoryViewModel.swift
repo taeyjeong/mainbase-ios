@@ -11,10 +11,10 @@ final class HistoryViewModel: ObservableObject {
     private let db = Firestore.firestore()
     private var listener: ListenerRegistration?
 
-    func startListening() {
-        guard let uid = Auth.auth().currentUser?.uid else { return }
-        guard listener == nil else { return }
+    func startListening(userId: String? = nil) {
+        guard let uid = userId ?? Auth.auth().currentUser?.uid else { return }
 
+        listener?.remove()
         isLoading = true
         listener = db.collection("users").document(uid).collection("history")
             .order(by: "clockOut", descending: true)

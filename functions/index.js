@@ -288,3 +288,45 @@ exports.createClockEventNotification = onCall(async (request) => {
   };
 });
 
+exports.setEmployeeStatus = onCall(async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError("unauthenticated", "Authentication is required.");
+  }
+
+  const { targetUserId, isEmployed } = request.data || {};
+  if (typeof targetUserId !== "string" || targetUserId.trim().length === 0) {
+    throw new HttpsError("invalid-argument", "targetUserId is required.");
+  }
+  if (typeof isEmployed !== "boolean") {
+    throw new HttpsError("invalid-argument", "isEmployed must be a boolean.");
+  }
+
+  const db = getFirestore();
+  const callerSnap = await db.collection("users").doc(request.auth.uid).get();
+  const callerData = callerSnap.exists ? callerSnap.data() || {} : {};
+
+  if (callerData.admin !== true) {
+    throw new HttpsError("permission-denied", "Only admins can update employment status.");
+  }
+
+  const targetSnap = await db.collection("users").doc(targetUserId).get();
+  if (!targetSnap.exists) {
+    throw new HttpsError("not-found", "Target user was not found.");
+  }
+  const targetData = targetSnap.data() || {};
+
+  if (targetData.company !== callerData.company) {
+    throw new HttpsError("permission-denied", "You can only update employees within your own company.");
+  }
+
+  await db.collection("users").doc(targetUserId).update({ isEmployed });
+
+  logger.info("Employee status updated", {
+    adminUserId: request.auth.uid,
+    targetUserId,
+    isEmployed,
+  });
+
+  return { success: true };
+});
+

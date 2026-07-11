@@ -13,17 +13,12 @@ struct ContentView: View {
         Group {
             if authVM.isSignedIn {
                 TabView(selection: $selectedTab) {
-                    TimeTrackerView(onClockIn: { selectedTab = .reports })
+                    TimeTrackerView(onClockIn: { selectedTab = .projects })
                         .environmentObject(notificationVM)
                         .environmentObject(authVM)
                         .environmentObject(trackerVM)
                         .tabItem { Label("Clock In", systemImage: "clock") }
                         .tag(AppTab.clockIn)
-
-                    ReportsListView()
-                        .environmentObject(authVM)
-                        .tabItem { Label("Reports", systemImage: "doc.text.fill") }
-                        .tag(AppTab.reports)
 
                     ProjectsListView()
                         .tabItem { Label("Projects", systemImage: "folder.fill") }
@@ -32,7 +27,7 @@ struct ContentView: View {
                 .onChange(of: trackerVM.isClockedIn) { _, isClockedIn in
                     guard !didSetInitialTab else { return }
                     didSetInitialTab = true
-                    if isClockedIn { selectedTab = .reports }
+                    if isClockedIn { selectedTab = .projects }
                 }
             } else {
                 NavigationStack {

@@ -10,9 +10,14 @@ final class TimeTrackerViewModel: ObservableObject {
     @Published private(set) var isClockedIn = false
     @Published private(set) var clockInTime: Date? = nil
     @Published private(set) var isSaving = false
+    @Published private(set) var isAdmin = false
+
+    private static let maxSessionDuration: TimeInterval = 8 * 60 * 60
+    private static let autoClockOutReport = "Automatically clocked out after 8 hours."
 
     private let db = Firestore.firestore()
     private var listener: ListenerRegistration?
+    private var autoStopTimer: Timer?
 
     private var userId: String? { Auth.auth().currentUser?.uid }
 
@@ -23,17 +28,37 @@ final class TimeTrackerViewModel: ObservableObject {
             guard let data = snap?.data() else { return }
             let online = data["isOnline"] as? Bool ?? false
             let ts = data["clockInTime"] as? Timestamp
+            let admin = data["admin"] as? Bool ?? false
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isClockedIn = online
                 self.clockInTime = ts?.dateValue()
+                self.isAdmin = admin
             }
         }
+        startAutoStopTimer()
     }
 
     func stopListening() {
         listener?.remove()
         listener = nil
+        autoStopTimer?.invalidate()
+        autoStopTimer = nil
+    }
+
+    private func startAutoStopTimer() {
+        autoStopTimer?.invalidate()
+        autoStopTimer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                await self?.autoClockOutIfNeeded()
+            }
+        }
+    }
+
+    private func autoClockOutIfNeeded() async {
+        guard isClockedIn, !isSaving, let start = clockInTime else { return }
+        guard Date().timeIntervalSince(start) >= Self.maxSessionDuration else { return }
+        await clockOut(report: Self.autoClockOutReport)
     }
 
     func formattedElapsed(from start: Date, now: Date = Date()) -> String {

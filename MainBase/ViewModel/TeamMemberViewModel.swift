@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import FirebaseAuth
 import FirebaseFirestore
 
 @MainActor
@@ -11,12 +12,21 @@ final class TeamMemberViewModel: ObservableObject {
     private var listener: ListenerRegistration?
 
     func startListening() {
+        guard let uid = Auth.auth().currentUser?.uid else {
+            isLoading = false
+            return
+        }
         listener = db.collection("users")
             .order(by: "name")
             .addSnapshotListener { [weak self] snapshot, _ in
                 guard let self, let snapshot else { return }
-                let mapped = snapshot.documents.map { doc -> TeamMember in
+                let docs = snapshot.documents
+                let currentCompany = docs.first(where: { $0.documentID == uid })?.data()["company"] as? String ?? ""
+                let mapped = docs.compactMap { doc -> TeamMember? in
                     let data = doc.data()
+                    let company = data["company"] as? String ?? ""
+                    let isEmployed = data["isEmployed"] as? Bool ?? false
+                    guard company == currentCompany, isEmployed else { return nil }
                     let fullName = data["name"] as? String ?? ""
                     let firstName = fullName.components(separatedBy: " ").first.flatMap { $0.isEmpty ? nil : $0 } ?? "Unknown"
                     return TeamMember(

@@ -6,6 +6,8 @@ struct UserProfile {
     var company: String = ""
     var phone: String = ""
     var country: String = ""
+    var admin: Bool = false
+    var isEmployed: Bool = false
 
     init() {}
 
@@ -15,6 +17,8 @@ struct UserProfile {
         company = data["company"] as? String ?? ""
         phone = data["phone"] as? String ?? ""
         country = data["country"] as? String ?? ""
+        admin = data["admin"] as? Bool ?? false
+        isEmployed = data["isEmployed"] as? Bool ?? false
     }
 
     var firestoreUpdateData: [String: Any] {

@@ -5,8 +5,10 @@ struct ProfileSheetView: View {
     @EnvironmentObject private var authVM: AuthViewModel
     @StateObject private var vm = ProfileViewModel()
     @StateObject private var historyVM = HistoryViewModel()
+    @StateObject private var adminVM = AdminEmployeesViewModel()
 
     @State private var showSignOutConfirm = false
+    @State private var selectedHistoryUserId: String?
 
     var body: some View {
         NavigationStack {
@@ -19,6 +21,9 @@ struct ProfileSheetView: View {
                         VStack(spacing: 24) {
                             avatarSection
                             infoCard
+                            if vm.profile.admin {
+                                adminSection
+                            }
                             historySection
                             saveButton
                             signOutButton
@@ -44,11 +49,29 @@ struct ProfileSheetView: View {
             vm.loadProfile()
             historyVM.startListening()
         }
-        .onDisappear { historyVM.stopListening() }
+        .onDisappear {
+            historyVM.stopListening()
+            adminVM.stopListening()
+        }
+        .onChange(of: vm.isLoading) { _, isLoading in
+            guard !isLoading, vm.profile.admin else { return }
+            adminVM.startListening(company: vm.profile.company)
+        }
+        .onChange(of: selectedHistoryUserId) { _, userId in
+            historyVM.startListening(userId: userId)
+        }
         .alert("Profile", isPresented: $vm.showAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(vm.alertMessage)
+        }
+        .alert("Employees", isPresented: Binding(
+            get: { adminVM.errorMessage != nil },
+            set: { if !$0 { adminVM.errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(adminVM.errorMessage ?? "")
         }
         .confirmationDialog("Sign out of your account?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) { authVM.signOut() }
@@ -152,12 +175,70 @@ struct ProfileSheetView: View {
         .padding(.bottom, 16)
     }
 
-    private var historySection: some View {
+    private var adminSection: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("History")
+            Text("Employees")
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(AppColors.text)
                 .padding(.bottom, 16)
+
+            if adminVM.isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 24)
+            } else if adminVM.employees.isEmpty {
+                Text("No employees found.")
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.textSecondary)
+            } else {
+                ForEach(Array(adminVM.employees.enumerated()), id: \.element.id) { index, employee in
+                    if index > 0 {
+                        Divider()
+                            .padding(.vertical, 8)
+                    }
+                    HStack {
+                        Text(employee.name)
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(AppColors.text)
+                        Spacer()
+                        Toggle("", isOn: Binding(
+                            get: { employee.isEmployed },
+                            set: { adminVM.setEmployed($0, for: employee.id) }
+                        ))
+                        .labelsHidden()
+                        .tint(AppColors.primary)
+                    }
+                }
+            }
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(AppColors.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+        )
+    }
+
+    private var historySection: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Text("History")
+                    .font(.system(size: 16, weight: .semibold))
+                    .foregroundColor(AppColors.text)
+
+                if vm.profile.admin {
+                    Spacer()
+                    Picker("View history for", selection: $selectedHistoryUserId) {
+                        Text("Me").tag(String?.none)
+                        ForEach(adminVM.employees) { employee in
+                            Text(employee.name).tag(Optional(employee.id))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(AppColors.primary)
+                }
+            }
+            .padding(.bottom, 16)
 
             if historyVM.isLoading {
                 ProgressView()
