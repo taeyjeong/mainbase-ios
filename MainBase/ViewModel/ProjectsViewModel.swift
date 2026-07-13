@@ -130,46 +130,73 @@ final class ProjectsViewModel: ObservableObject {
                 .order(by: "createdAt", descending: true)
                 .getDocuments()
 
-            var results: [Project] = []
-            for projectDoc in projectsSnapshot.documents {
-                let projectData = projectDoc.data()
-                let tasksSnapshot = try await db.collection("projects").document(projectDoc.documentID)
-                    .collection("tasks")
-                    .order(by: "order", descending: false)
-                    .getDocuments()
-
-                var tasks: [ProjectTask] = []
-                for taskDoc in tasksSnapshot.documents {
-                    let taskData = taskDoc.data()
-                    let subtasks = await fetchTaskSubtasks(projectId: projectDoc.documentID, taskId: taskDoc.documentID)
-                    tasks.append(ProjectTask(
-                        id: taskDoc.documentID,
-                        title: taskData["title"] as? String ?? "",
-                        description: taskData["description"] as? String ?? "",
-                        status: normalizeStatus(taskData["status"]),
-                        requiresLink: taskData["requiresLink"] as? Bool ?? false,
-                        proofLink: taskData["proofLink"] as? String ?? "",
-                        assigneeEmail: taskData["assigneeEmail"] as? String ?? "",
-                        completedAt: normalizeTimestamp(taskData["completedAt"]),
-                        order: taskData["order"] as? Int ?? 0,
-                        subtasks: subtasks
-                    ))
+            return await withTaskGroup(of: (Int, Project).self) { group in
+                for (index, projectDoc) in projectsSnapshot.documents.enumerated() {
+                    group.addTask {
+                        (index, await self.fetchProject(projectDoc))
+                    }
                 }
-
-                let allTasksCompleted = !tasks.isEmpty && tasks.allSatisfy { $0.status == .completed }
-                results.append(Project(
-                    id: projectDoc.documentID,
-                    projectTitle: projectData["projectTitle"] as? String ?? "",
-                    projectDescription: projectData["projectDescription"] as? String ?? "",
-                    projectLead: projectData["projectLead"] as? String ?? "",
-                    label: (projectData["label"] as? String) == ProjectLabel.socials.rawValue ? .socials : .standard,
-                    status: allTasksCompleted ? .completed : .inProgress,
-                    createdAt: normalizeTimestamp(projectData["createdAt"]),
-                    updatedAt: normalizeTimestamp(projectData["updatedAt"]),
-                    tasks: tasks
-                ))
+                var indexed: [(Int, Project)] = []
+                for await result in group {
+                    indexed.append(result)
+                }
+                return indexed.sorted { $0.0 < $1.0 }.map { $0.1 }
             }
-            return results
+        } catch {
+            return []
+        }
+    }
+
+    private func fetchProject(_ projectDoc: QueryDocumentSnapshot) async -> Project {
+        let projectData = projectDoc.data()
+        let tasks = await fetchTasks(projectId: projectDoc.documentID)
+        let allTasksCompleted = !tasks.isEmpty && tasks.allSatisfy { $0.status == .completed }
+        return Project(
+            id: projectDoc.documentID,
+            projectTitle: projectData["projectTitle"] as? String ?? "",
+            projectDescription: projectData["projectDescription"] as? String ?? "",
+            projectLead: projectData["projectLead"] as? String ?? "",
+            label: (projectData["label"] as? String) == ProjectLabel.socials.rawValue ? .socials : .standard,
+            status: allTasksCompleted ? .completed : .inProgress,
+            createdAt: normalizeTimestamp(projectData["createdAt"]),
+            updatedAt: normalizeTimestamp(projectData["updatedAt"]),
+            tasks: tasks
+        )
+    }
+
+    private func fetchTasks(projectId: String) async -> [ProjectTask] {
+        do {
+            let tasksSnapshot = try await db.collection("projects").document(projectId)
+                .collection("tasks")
+                .order(by: "order", descending: false)
+                .getDocuments()
+
+            return await withTaskGroup(of: (Int, ProjectTask).self) { group in
+                for (index, taskDoc) in tasksSnapshot.documents.enumerated() {
+                    group.addTask {
+                        let taskData = taskDoc.data()
+                        let subtasks = await self.fetchTaskSubtasks(projectId: projectId, taskId: taskDoc.documentID)
+                        let task = ProjectTask(
+                            id: taskDoc.documentID,
+                            title: taskData["title"] as? String ?? "",
+                            description: taskData["description"] as? String ?? "",
+                            status: await self.normalizeStatus(taskData["status"]),
+                            requiresLink: taskData["requiresLink"] as? Bool ?? false,
+                            proofLink: taskData["proofLink"] as? String ?? "",
+                            assigneeEmail: taskData["assigneeEmail"] as? String ?? "",
+                            completedAt: await self.normalizeTimestamp(taskData["completedAt"]),
+                            order: taskData["order"] as? Int ?? 0,
+                            subtasks: subtasks
+                        )
+                        return (index, task)
+                    }
+                }
+                var indexed: [(Int, ProjectTask)] = []
+                for await result in group {
+                    indexed.append(result)
+                }
+                return indexed.sorted { $0.0 < $1.0 }.map { $0.1 }
+            }
         } catch {
             return []
         }
