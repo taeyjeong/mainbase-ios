@@ -59,19 +59,37 @@ final class ProjectsViewModel: ObservableObject {
     @Published private(set) var isLoadingProjects = false
     @Published private(set) var isSavingTask = false
     @Published private(set) var assignableUserEmails: [String] = []
+    @Published private(set) var assignableTeamMembers: [AssignableUser] = []
+    @Published private(set) var userNamesByEmail: [String: String] = [:]
     @Published private(set) var currentUserEmail: String = ""
+    @Published private(set) var currentUserIsAdmin: Bool = false
+    @Published private(set) var archivedProjects: [Project] = []
+    @Published private(set) var isLoadingArchivedProjects = false
 
     private let db = Firestore.firestore()
 
-    private func loadCurrentUserEmail() async -> String {
-        guard let uid = Auth.auth().currentUser?.uid else { return "" }
+    private func loadCurrentUserInfo() async -> (email: String, isAdmin: Bool) {
+        guard let uid = Auth.auth().currentUser?.uid else { return ("", false) }
         let fallback = Auth.auth().currentUser?.email ?? ""
         do {
             let snapshot = try await db.collection("users").document(uid).getDocument()
-            return (snapshot.data()?["email"] as? String)?.trimmingCharacters(in: .whitespaces) ?? fallback
+            let data = snapshot.data()
+            let email = (data?["email"] as? String)?.trimmingCharacters(in: .whitespaces) ?? fallback
+            let isAdmin = data?["admin"] as? Bool ?? false
+            return (email, isAdmin)
         } catch {
-            return fallback
+            return (fallback, false)
         }
+    }
+
+    // MARK: - Permissions
+
+    func canEditOrArchive(_ project: Project) -> Bool {
+        currentUserIsAdmin || project.projectLead.caseInsensitiveCompare(currentUserEmail) == .orderedSame
+    }
+
+    func canDelete(_ project: Project) -> Bool {
+        currentUserIsAdmin
     }
 
     private func normalizeStatus(_ raw: Any?) -> ProjectStatus {
@@ -88,17 +106,34 @@ final class ProjectsViewModel: ObservableObject {
         isLoadingProjects = true
         defer { isLoadingProjects = false }
         async let fetchedProjects = fetchProjects()
-        async let fetchedEmails = fetchAssignableUserEmails()
-        async let fetchedUserEmail = loadCurrentUserEmail()
-        let (loadedProjects, loadedEmails, userEmail) = await (fetchedProjects, fetchedEmails, fetchedUserEmail)
-        projects = loadedProjects
-        currentUserEmail = userEmail
-        let lead = userEmail.trimmingCharacters(in: .whitespaces)
+        async let fetchedUsers = fetchAssignableUsers()
+        async let fetchedUserInfo = loadCurrentUserInfo()
+        let (loadedProjects, loadedUsers, userInfo) = await (fetchedProjects, fetchedUsers, fetchedUserInfo)
+        projects = loadedProjects.filter { !$0.isArchived }
+        currentUserEmail = userInfo.email
+        currentUserIsAdmin = userInfo.isAdmin
+        userNamesByEmail = Dictionary(uniqueKeysWithValues: loadedUsers.map { ($0.email.lowercased(), $0.name) })
+        assignableTeamMembers = loadedUsers
+            .filter { $0.isEmployed }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        let lead = userInfo.email.trimmingCharacters(in: .whitespaces)
+        let allEmails = loadedUsers.map { $0.email }
         if !lead.isEmpty {
-            assignableUserEmails = Array(Set([lead] + loadedEmails)).sorted()
+            assignableUserEmails = Array(Set([lead] + allEmails)).sorted()
         } else {
-            assignableUserEmails = loadedEmails
+            assignableUserEmails = allEmails.sorted()
         }
+    }
+
+    func displayName(forEmail email: String) -> String {
+        userNamesByEmail[email.trimmingCharacters(in: .whitespaces).lowercased()] ?? email
+    }
+
+    func loadArchivedProjects() async {
+        isLoadingArchivedProjects = true
+        defer { isLoadingArchivedProjects = false }
+        let allProjects = await fetchProjects()
+        archivedProjects = allProjects.filter { $0.isArchived }
     }
 
     private func fetchTaskSubtasks(projectId: String, taskId: String) async -> [ProjectSubtask] {
@@ -156,8 +191,10 @@ final class ProjectsViewModel: ObservableObject {
             projectTitle: projectData["projectTitle"] as? String ?? "",
             projectDescription: projectData["projectDescription"] as? String ?? "",
             projectLead: projectData["projectLead"] as? String ?? "",
+            teamMembers: projectData["teamMembers"] as? [String] ?? [],
             label: (projectData["label"] as? String) == ProjectLabel.socials.rawValue ? .socials : .standard,
             status: allTasksCompleted ? .completed : .inProgress,
+            isArchived: projectData["isArchived"] as? Bool ?? false,
             createdAt: normalizeTimestamp(projectData["createdAt"]),
             updatedAt: normalizeTimestamp(projectData["updatedAt"]),
             tasks: tasks
@@ -202,14 +239,20 @@ final class ProjectsViewModel: ObservableObject {
         }
     }
 
-    func fetchAssignableUserEmails() async -> [String] {
+    private func fetchAssignableUsers() async -> [AssignableUser] {
         do {
             let snapshot = try await db.collection("users").getDocuments()
-            let emails = snapshot.documents.compactMap { doc -> String? in
-                let email = (doc.data()["email"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
-                return email.isEmpty ? nil : email
+            var seenEmails = Set<String>()
+            var users: [AssignableUser] = []
+            for doc in snapshot.documents {
+                let data = doc.data()
+                let email = (data["email"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+                guard !email.isEmpty, seenEmails.insert(email.lowercased()).inserted else { continue }
+                let name = (data["name"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+                let isEmployed = data["isEmployed"] as? Bool ?? false
+                users.append(AssignableUser(email: email, name: name.isEmpty ? email : name, isEmployed: isEmployed))
             }
-            return Array(Set(emails)).sorted()
+            return users
         } catch {
             return []
         }
@@ -226,7 +269,11 @@ final class ProjectsViewModel: ObservableObject {
 
     // MARK: - Mutations
 
-    func submitProject(title: String, description: String, label: ProjectLabel) async -> ProjectActionResult {
+    private func cleanedEmailList(_ emails: [String]) -> [String] {
+        Array(Set(emails.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })).sorted()
+    }
+
+    func submitProject(title: String, description: String, label: ProjectLabel, teamMembers: [String]) async -> ProjectActionResult {
         let projectTitle = title.trimmingCharacters(in: .whitespaces)
         let projectDescription = description.trimmingCharacters(in: .whitespaces)
         let projectLead = currentUserEmail.trimmingCharacters(in: .whitespaces)
@@ -238,6 +285,7 @@ final class ProjectsViewModel: ObservableObject {
                 "projectTitle": projectTitle,
                 "projectDescription": projectDescription,
                 "projectLead": projectLead,
+                "teamMembers": cleanedEmailList(teamMembers),
                 "label": label.rawValue,
                 "status": ProjectStatus.inProgress.rawValue,
                 "createdAt": FieldValue.serverTimestamp(),
@@ -415,6 +463,88 @@ final class ProjectsViewModel: ObservableObject {
             return .ok
         } catch {
             return .failure("Could not delete task right now.")
+        }
+    }
+
+    func submitEditProject(projectId: String, title: String, description: String, projectLead: String, teamMembers: [String]) async -> ProjectActionResult {
+        guard let existing = projects.first(where: { $0.id == projectId }) else {
+            return .failure("Project not found.")
+        }
+        guard canEditOrArchive(existing) else {
+            return .failure("You don't have permission to edit this project.")
+        }
+        let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
+        let trimmedDescription = description.trimmingCharacters(in: .whitespaces)
+        let trimmedLead = projectLead.trimmingCharacters(in: .whitespaces)
+        guard !trimmedTitle.isEmpty else { return .failure("Project title is required.") }
+        guard !trimmedLead.isEmpty else { return .failure("Project lead is required.") }
+
+        do {
+            try await db.collection("projects").document(projectId).updateData([
+                "projectTitle": trimmedTitle,
+                "projectDescription": trimmedDescription,
+                "projectLead": trimmedLead,
+                "teamMembers": cleanedEmailList(teamMembers),
+                "updatedAt": FieldValue.serverTimestamp(),
+            ])
+            await loadProjects()
+            return .ok
+        } catch {
+            return .failure("Could not update project right now.")
+        }
+    }
+
+    func archiveProject(projectId: String) async -> ProjectActionResult {
+        guard let existing = projects.first(where: { $0.id == projectId }), canEditOrArchive(existing) else {
+            return .failure("You don't have permission to archive this project.")
+        }
+        do {
+            try await db.collection("projects").document(projectId).updateData([
+                "isArchived": true,
+                "updatedAt": FieldValue.serverTimestamp(),
+            ])
+            projects.removeAll { $0.id == projectId }
+            return .ok
+        } catch {
+            return .failure("Could not archive project right now.")
+        }
+    }
+
+    func unarchiveProject(projectId: String) async -> ProjectActionResult {
+        guard currentUserIsAdmin else {
+            return .failure("Only an admin can restore projects.")
+        }
+        do {
+            try await db.collection("projects").document(projectId).updateData([
+                "isArchived": false,
+                "updatedAt": FieldValue.serverTimestamp(),
+            ])
+            archivedProjects.removeAll { $0.id == projectId }
+            return .ok
+        } catch {
+            return .failure("Could not restore project right now.")
+        }
+    }
+
+    func deleteProject(projectId: String) async -> ProjectActionResult {
+        guard currentUserIsAdmin else {
+            return .failure("Only an admin can delete projects.")
+        }
+        do {
+            let projectRef = db.collection("projects").document(projectId)
+            let tasksSnapshot = try await projectRef.collection("tasks").getDocuments()
+            for taskDoc in tasksSnapshot.documents {
+                let subtasksSnapshot = try await taskDoc.reference.collection("subtasks").getDocuments()
+                for subtaskDoc in subtasksSnapshot.documents {
+                    try await subtaskDoc.reference.delete()
+                }
+                try await taskDoc.reference.delete()
+            }
+            try await projectRef.delete()
+            projects.removeAll { $0.id == projectId }
+            return .ok
+        } catch {
+            return .failure("Could not delete project right now.")
         }
     }
 

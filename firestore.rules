@@ -1,0 +1,95 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function currentUser() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && currentUser().admin == true;
+    }
+
+    // ---------------- users ----------------
+    match /users/{userId} {
+      // Emails/admin flags/team rosters are read across the app (assignee pickers,
+      // reports, team member lists), so any signed-in user may read profiles.
+      allow read: if isSignedIn();
+
+      // Account creation happens client-side at sign-up; admin must always start false.
+      allow create: if isOwner(userId)
+        && request.resource.data.admin == false;
+
+      // Owners can update their own doc (profile edits, clock-in/out, fcm token, etc.)
+      // but may never change their own admin/isEmployed flags directly — those are
+      // only mutated server-side via the setEmployeeStatus Cloud Function (Admin SDK,
+      // bypasses rules) or by an admin.
+      allow update: if isAdmin()
+        || (isOwner(userId)
+            && request.resource.data.admin == resource.data.admin
+            && request.resource.data.isEmployed == resource.data.isEmployed);
+
+      allow delete: if false;
+
+      match /notifications/{notificationId} {
+        allow read, update: if isOwner(userId);
+        // Notifications are written by the createClockEventNotification Cloud
+        // Function using the Admin SDK, which bypasses rules entirely.
+        allow create, delete: if false;
+      }
+
+      match /history/{historyId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow create: if isOwner(userId);
+        allow update, delete: if false;
+      }
+
+      match /reports/{reportId} {
+        // ReportsListView is visible to any clocked-in user, not just admins,
+        // and reads every user's reports.
+        allow read: if isSignedIn();
+        allow create: if isOwner(userId);
+        allow update, delete: if false;
+      }
+    }
+
+    // ---------------- projects ----------------
+    match /projects/{projectId} {
+      allow read: if isSignedIn();
+
+      allow create: if isSignedIn()
+        && request.resource.data.projectLead == currentUser().email
+        && request.resource.data.isArchived == false;
+
+      // Admin can touch any project; the existing (pre-edit) lead can edit/archive
+      // their own. Field-level intent (e.g. only admin/lead may reassign lead or
+      // touch teamMembers) is enforced by this same check, since it gates the
+      // whole update.
+      allow update: if isAdmin()
+        || (isSignedIn() && resource.data.projectLead == currentUser().email);
+
+      allow delete: if isAdmin();
+
+      match /tasks/{taskId} {
+        allow read: if isSignedIn();
+        allow write: if isSignedIn();
+
+        match /subtasks/{subtaskId} {
+          allow read: if isSignedIn();
+          allow write: if isSignedIn();
+        }
+      }
+    }
+  }
+}

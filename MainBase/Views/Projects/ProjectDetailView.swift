@@ -22,9 +22,14 @@ struct ProjectDetailView: View {
                             .font(.system(size: 14))
                             .foregroundColor(AppColors.textSecondary)
                     }
-                    Text("Lead: \(currentProject.projectLead)")
+                    Text("Lead: \(vm.displayName(forEmail: currentProject.projectLead))")
                         .font(.system(size: 13))
                         .foregroundColor(AppColors.textSecondary)
+                    if !currentProject.teamMembers.isEmpty {
+                        Text("Team: \(currentProject.teamMembers.map(vm.displayName(forEmail:)).joined(separator: ", "))")
+                            .font(.system(size: 13))
+                            .foregroundColor(AppColors.textSecondary)
+                    }
                 }
                 .listRowBackground(AppColors.cardBackground)
             }

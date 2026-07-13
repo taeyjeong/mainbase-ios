@@ -1,15 +1,29 @@
 import SwiftUI
 
-struct AddProjectSheet: View {
+struct EditProjectSheet: View {
     @ObservedObject var vm: ProjectsViewModel
+    let project: Project
     @Environment(\.dismiss) private var dismiss
 
-    @State private var title = ""
-    @State private var description = ""
-    @State private var isSocials = false
-    @State private var teamMembers: Set<String> = []
+    @State private var title: String
+    @State private var description: String
+    @State private var projectLead: String
+    @State private var teamMembers: Set<String>
     @State private var isSaving = false
     @State private var errorMessage: String?
+
+    init(vm: ProjectsViewModel, project: Project) {
+        self.vm = vm
+        self.project = project
+        _title = State(initialValue: project.projectTitle)
+        _description = State(initialValue: project.projectDescription)
+        _projectLead = State(initialValue: project.projectLead)
+        _teamMembers = State(initialValue: Set(project.teamMembers))
+    }
+
+    private var leadOptions: [String] {
+        Array(Set([project.projectLead] + vm.assignableUserEmails)).sorted()
+    }
 
     var body: some View {
         NavigationStack {
@@ -26,13 +40,20 @@ struct AddProjectSheet: View {
                             .inputFieldStyle()
                     }
 
-                    CheckboxToggle(isOn: $isSocials) {
-                        Text("Use socials task blueprint")
-                            .font(.system(size: 15))
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Project Lead")
+                            .font(.system(size: 16, weight: .medium))
                             .foregroundColor(AppColors.text)
+                        Picker("Project Lead", selection: $projectLead) {
+                            ForEach(leadOptions, id: \.self) { email in
+                                Text(vm.displayName(forEmail: email)).tag(email)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(AppColors.primary)
                     }
 
-                    TeamMemberPicker(selectedEmails: $teamMembers, users: vm.assignableTeamMembers, excluding: vm.currentUserEmail)
+                    TeamMemberPicker(selectedEmails: $teamMembers, users: vm.assignableTeamMembers, excluding: projectLead)
 
                     if let errorMessage {
                         Text(errorMessage)
@@ -43,7 +64,7 @@ struct AddProjectSheet: View {
                 .padding(20)
             }
             .background(AppColors.background.ignoresSafeArea())
-            .navigationTitle("New Project")
+            .navigationTitle("Edit Project")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) {
@@ -63,10 +84,11 @@ struct AddProjectSheet: View {
     private func handleSave() async {
         isSaving = true
         errorMessage = nil
-        let result = await vm.submitProject(
+        let result = await vm.submitEditProject(
+            projectId: project.id,
             title: title,
             description: description,
-            label: isSocials ? .socials : .standard,
+            projectLead: projectLead,
             teamMembers: Array(teamMembers)
         )
         isSaving = false

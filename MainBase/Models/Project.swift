@@ -41,8 +41,10 @@ struct Project: Identifiable {
     var projectTitle: String
     var projectDescription: String
     var projectLead: String
+    var teamMembers: [String]
     var label: ProjectLabel
     var status: ProjectStatus
+    var isArchived: Bool
     var createdAt: Date?
     var updatedAt: Date?
     var tasks: [ProjectTask]

@@ -3,6 +3,9 @@ import SwiftUI
 struct ProjectsListView: View {
     @StateObject private var vm = ProjectsViewModel()
     @State private var showingAddProject = false
+    @State private var showingArchives = false
+    @State private var editingProject: Project?
+    @State private var projectPendingDelete: Project?
 
     var body: some View {
         NavigationStack {
@@ -19,6 +22,31 @@ struct ProjectsListView: View {
                                 ProjectRow(project: project)
                             }
                             .listRowBackground(AppColors.cardBackground)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                if vm.canDelete(project) {
+                                    Button(role: .destructive) {
+                                        projectPendingDelete = project
+                                    } label: {
+                                        Label("Delete", systemImage: "trash")
+                                    }
+                                }
+
+                                if vm.canEditOrArchive(project) {
+                                    Button {
+                                        Task { await vm.archiveProject(projectId: project.id) }
+                                    } label: {
+                                        Label("Archive", systemImage: "archivebox")
+                                    }
+                                    .tint(.orange)
+
+                                    Button {
+                                        editingProject = project
+                                    } label: {
+                                        Label("Edit", systemImage: "pencil")
+                                    }
+                                    .tint(.blue)
+                                }
+                            }
                         }
                     }
                     .listStyle(.plain)
@@ -34,6 +62,16 @@ struct ProjectsListView: View {
                 }
             }
             .toolbar {
+                if vm.currentUserIsAdmin {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button {
+                            showingArchives = true
+                        } label: {
+                            Image(systemName: "archivebox")
+                        }
+                        .accessibilityLabel("Show Archives")
+                    }
+                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddProject = true
@@ -46,6 +84,30 @@ struct ProjectsListView: View {
         .task { await vm.loadProjects() }
         .sheet(isPresented: $showingAddProject) {
             AddProjectSheet(vm: vm)
+        }
+        .sheet(item: $editingProject) { project in
+            EditProjectSheet(vm: vm, project: project)
+        }
+        .sheet(isPresented: $showingArchives) {
+            ArchivedProjectsView(vm: vm)
+        }
+        .confirmationDialog(
+            "Delete \(projectPendingDelete?.projectTitle ?? "this project")?",
+            isPresented: Binding(
+                get: { projectPendingDelete != nil },
+                set: { isPresented in if !isPresented { projectPendingDelete = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                if let project = projectPendingDelete {
+                    Task { await vm.deleteProject(projectId: project.id) }
+                }
+                projectPendingDelete = nil
+            }
+            Button("Cancel", role: .cancel) { projectPendingDelete = nil }
+        } message: {
+            Text("This will permanently delete the project and all of its tasks.")
         }
     }
 
