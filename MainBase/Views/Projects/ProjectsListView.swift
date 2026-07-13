@@ -141,10 +141,7 @@ private struct ProjectRow: View {
                 StatusBadge(status: project.status)
             }
             if !project.projectDescription.isEmpty {
-                Text(project.projectDescription)
-                    .font(.system(size: 14))
-                    .foregroundColor(AppColors.textSecondary)
-                    .lineLimit(2)
+                DescriptionText(text: project.projectDescription, lineLimit: 2)
             }
             Text("\(completedTaskCount)/\(project.tasks.count) tasks complete")
                 .font(.system(size: 13))

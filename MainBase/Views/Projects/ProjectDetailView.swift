@@ -18,9 +18,7 @@ struct ProjectDetailView: View {
             Section {
                 VStack(alignment: .leading, spacing: 8) {
                     if !currentProject.projectDescription.isEmpty {
-                        Text(currentProject.projectDescription)
-                            .font(.system(size: 14))
-                            .foregroundColor(AppColors.textSecondary)
+                        DescriptionText(text: currentProject.projectDescription)
                     }
                     Text("Lead: \(vm.displayName(forEmail: currentProject.projectLead))")
                         .font(.system(size: 13))

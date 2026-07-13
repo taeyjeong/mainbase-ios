@@ -67,10 +67,7 @@ private struct ArchivedProjectRow: View {
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(AppColors.text)
             if !project.projectDescription.isEmpty {
-                Text(project.projectDescription)
-                    .font(.system(size: 14))
-                    .foregroundColor(AppColors.textSecondary)
-                    .lineLimit(2)
+                DescriptionText(text: project.projectDescription, lineLimit: 2)
             }
             Text("Lead: \(leadName)")
                 .font(.system(size: 13))

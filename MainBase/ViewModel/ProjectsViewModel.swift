@@ -288,6 +288,7 @@ final class ProjectsViewModel: ObservableObject {
                 "teamMembers": cleanedEmailList(teamMembers),
                 "label": label.rawValue,
                 "status": ProjectStatus.inProgress.rawValue,
+                "isArchived": false,
                 "createdAt": FieldValue.serverTimestamp(),
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
