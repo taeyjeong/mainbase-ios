@@ -8,6 +8,9 @@ struct ProjectDetailView: View {
     @State private var showingAddTask = false
     @State private var taskToEdit: ProjectTask?
     @State private var taskForSubtask: ProjectTask?
+    @State private var savingTaskIds: Set<String> = []
+    @State private var savingSubtaskIds: Set<String> = []
+    @State private var errorMessage: String?
 
     private var currentProject: Project {
         vm.projects.first(where: { $0.id == project.id }) ?? project
@@ -37,25 +40,28 @@ struct ProjectDetailView: View {
                     TaskRow(
                         projectTask: projectTask,
                         isExpanded: expandedTaskIds.contains(projectTask.id),
-                        isSaving: vm.isSavingTask,
+                        isSaving: savingTaskIds.contains(projectTask.id),
+                        savingSubtaskIds: savingSubtaskIds,
                         onToggleExpanded: { toggleExpanded(projectTask.id) },
                         onToggleComplete: { isCompleted in
-                            Task {
+                            performTaskAction(taskId: projectTask.id) {
                                 await vm.submitToggleTaskCompletion(projectId: project.id, taskId: projectTask.id, isCompleted: isCompleted)
                             }
                         },
                         onEdit: { taskToEdit = projectTask },
                         onAddSubtask: { taskForSubtask = projectTask },
                         onDelete: {
-                            Task { await vm.submitDeleteTask(projectId: project.id, taskId: projectTask.id) }
+                            performTaskAction(taskId: projectTask.id) {
+                                await vm.submitDeleteTask(projectId: project.id, taskId: projectTask.id)
+                            }
                         },
                         onToggleSubtask: { subtask, isCompleted in
-                            Task {
+                            performSubtaskAction(subtaskId: subtask.id) {
                                 await vm.submitCompleteSubtask(projectId: project.id, taskId: projectTask.id, subtaskId: subtask.id, isCompleted: isCompleted)
                             }
                         },
                         onDeleteSubtask: { subtask in
-                            Task {
+                            performSubtaskAction(subtaskId: subtask.id) {
                                 await vm.submitDeleteSubtask(projectId: project.id, taskId: projectTask.id, subtaskId: subtask.id)
                             }
                         }
@@ -86,6 +92,11 @@ struct ProjectDetailView: View {
         .sheet(item: $taskForSubtask) { parentTask in
             AddSubtaskSheet(vm: vm, projectId: project.id, projectTask: parentTask)
         }
+        .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
+            Button("OK", role: .cancel) { errorMessage = nil }
+        } message: {
+            Text(errorMessage ?? "")
+        }
     }
 
     private func toggleExpanded(_ taskId: String) {
@@ -95,12 +106,35 @@ struct ProjectDetailView: View {
             expandedTaskIds.insert(taskId)
         }
     }
+
+    private func performTaskAction(taskId: String, action: @escaping () async -> ProjectActionResult) {
+        savingTaskIds.insert(taskId)
+        Task {
+            let result = await action()
+            savingTaskIds.remove(taskId)
+            if !result.success {
+                errorMessage = result.error
+            }
+        }
+    }
+
+    private func performSubtaskAction(subtaskId: String, action: @escaping () async -> ProjectActionResult) {
+        savingSubtaskIds.insert(subtaskId)
+        Task {
+            let result = await action()
+            savingSubtaskIds.remove(subtaskId)
+            if !result.success {
+                errorMessage = result.error
+            }
+        }
+    }
 }
 
 private struct TaskRow: View {
     let projectTask: ProjectTask
     let isExpanded: Bool
     let isSaving: Bool
+    let savingSubtaskIds: Set<String>
     let onToggleExpanded: () -> Void
     let onToggleComplete: (Bool) -> Void
     let onEdit: () -> Void
@@ -153,6 +187,7 @@ private struct TaskRow: View {
                     ForEach(projectTask.subtasks) { subtask in
                         SubtaskRow(
                             subtask: subtask,
+                            isSaving: savingSubtaskIds.contains(subtask.id),
                             onToggle: { onToggleSubtask(subtask, $0) },
                             onDelete: { onDeleteSubtask(subtask) }
                         )
@@ -167,6 +202,7 @@ private struct TaskRow: View {
 
 private struct SubtaskRow: View {
     let subtask: ProjectSubtask
+    let isSaving: Bool
     let onToggle: (Bool) -> Void
     let onDelete: () -> Void
 
@@ -178,6 +214,7 @@ private struct SubtaskRow: View {
                     .foregroundColor(AppColors.text)
                     .strikethrough(subtask.isCompleted)
             }
+            .disabled(isSaving)
             Spacer()
             Button(action: onDelete) {
                 Image(systemName: "trash")

@@ -57,7 +57,6 @@ struct ProjectActionResult {
 final class ProjectsViewModel: ObservableObject {
     @Published private(set) var projects: [Project] = []
     @Published private(set) var isLoadingProjects = false
-    @Published private(set) var isSavingTask = false
     @Published private(set) var assignableUserEmails: [String] = []
     @Published private(set) var assignableTeamMembers: [AssignableUser] = []
     @Published private(set) var userNamesByEmail: [String: String] = [:]
@@ -330,8 +329,6 @@ final class ProjectsViewModel: ObservableObject {
     func submitAddTask(projectId: String, title: String, assigneeEmail: String, requiresLink: Bool) async -> ProjectActionResult {
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return .failure("Task title is required.") }
-        isSavingTask = true
-        defer { isSavingTask = false }
         do {
             let projectLead = await getProjectLeadEmail(projectId: projectId)
             let trimmedAssignee = assigneeEmail.trimmingCharacters(in: .whitespaces)
@@ -359,8 +356,6 @@ final class ProjectsViewModel: ObservableObject {
     func submitAddSubtask(projectId: String, taskId: String, title: String, assigneeEmail: String) async -> ProjectActionResult {
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return .failure("Subtask title is required.") }
-        isSavingTask = true
-        defer { isSavingTask = false }
         do {
             let taskRef = db.collection("projects").document(projectId).collection("tasks").document(taskId)
             let existingSubtasks = try await taskRef.collection("subtasks").getDocuments()
@@ -381,8 +376,6 @@ final class ProjectsViewModel: ObservableObject {
     }
 
     func submitTaskLink(projectId: String, taskId: String, proofLink: String) async -> ProjectActionResult {
-        isSavingTask = true
-        defer { isSavingTask = false }
         let trimmedLink = proofLink.trimmingCharacters(in: .whitespaces)
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId).updateData([
@@ -399,8 +392,6 @@ final class ProjectsViewModel: ObservableObject {
     }
 
     func submitCompleteSubtask(projectId: String, taskId: String, subtaskId: String, isCompleted: Bool) async -> ProjectActionResult {
-        isSavingTask = true
-        defer { isSavingTask = false }
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId)
                 .collection("subtasks").document(subtaskId).updateData([
@@ -416,8 +407,6 @@ final class ProjectsViewModel: ObservableObject {
     }
 
     func submitToggleTaskCompletion(projectId: String, taskId: String, isCompleted: Bool) async -> ProjectActionResult {
-        isSavingTask = true
-        defer { isSavingTask = false }
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId).updateData([
                 "status": isCompleted ? ProjectStatus.completed.rawValue : ProjectStatus.inProgress.rawValue,
@@ -434,8 +423,6 @@ final class ProjectsViewModel: ObservableObject {
     func submitEditTask(projectId: String, taskId: String, title: String, requiresLink: Bool, assigneeEmail: String) async -> ProjectActionResult {
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return .failure("Task title is required.") }
-        isSavingTask = true
-        defer { isSavingTask = false }
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId).updateData([
                 "title": trimmedTitle,
@@ -451,8 +438,6 @@ final class ProjectsViewModel: ObservableObject {
     }
 
     func submitDeleteTask(projectId: String, taskId: String) async -> ProjectActionResult {
-        isSavingTask = true
-        defer { isSavingTask = false }
         do {
             let taskRef = db.collection("projects").document(projectId).collection("tasks").document(taskId)
             let subtasksSnapshot = try await taskRef.collection("subtasks").getDocuments()
@@ -550,8 +535,6 @@ final class ProjectsViewModel: ObservableObject {
     }
 
     func submitDeleteSubtask(projectId: String, taskId: String, subtaskId: String) async -> ProjectActionResult {
-        isSavingTask = true
-        defer { isSavingTask = false }
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId)
                 .collection("subtasks").document(subtaskId).delete()
