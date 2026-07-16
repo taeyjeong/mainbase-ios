@@ -1,11 +1,27 @@
 const { initializeApp } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
 const { getFirestore } = require("firebase-admin/firestore");
-const { onDocumentCreated } = require("firebase-functions/v2/firestore");
+const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
 
 initializeApp();
+
+// Mirrors MainBase/Models/NotificationType.swift. Keep both in sync.
+const NOTIFICATION_TYPES = Object.freeze({
+  CLOCK_EVENT: "clock_event",
+  TASK_ASSIGNED: "task_assigned",
+  SUBTASK_ASSIGNED: "subtask_assigned",
+  ADDED_TO_PROJECT: "added_to_project",
+  TASK_COMPLETED: "task_completed",
+  SUBTASK_COMPLETED: "subtask_completed",
+});
+
+// Mirrors the ClockAction enum in MainBase/Models/NotificationType.swift.
+const CLOCK_ACTIONS = Object.freeze({
+  CLOCK_IN: "clock_in",
+  CLOCK_OUT: "clock_out",
+});
 
 function isExpoPushToken(token) {
   return (
@@ -32,8 +48,8 @@ async function sendExpoPushNotifications(tokens, notificationPayload) {
     const messages = tokenChunk.map((token) => ({
       to: token,
       sound: "default",
-      title: notificationPayload.title || "Clock Update",
-      body: notificationPayload.body || "A clock event was recorded.",
+      title: notificationPayload.title || "MainBase",
+      body: notificationPayload.body || "You have a new notification.",
       data: notificationPayload.data || {},
     }));
 
@@ -132,7 +148,56 @@ async function readRecipientTokens(recipientUserId) {
   };
 }
 
-exports.sendClockEventPush = onDocumentCreated(
+// Looks up users by email (case-insensitive) in a single collection scan, so
+// project-notification triggers can resolve an assigneeEmail/teamMembers entry
+// to the uid + display name needed to write a notification. The user base is
+// small enough that a full scan matches the pattern already used for the
+// clock-event fan-out below.
+async function lookupUsersByEmail(emails) {
+  const wanted = new Set(
+    emails.map((email) => (typeof email === "string" ? email.trim().toLowerCase() : "")).filter(Boolean)
+  );
+  const result = new Map();
+  if (wanted.size === 0) return result;
+
+  const db = getFirestore();
+  const usersSnap = await db.collection("users").get();
+  usersSnap.docs.forEach((doc) => {
+    const data = doc.data() || {};
+    const email = typeof data.email === "string" ? data.email.trim().toLowerCase() : "";
+    if (email && wanted.has(email)) {
+      result.set(email, {
+        uid: doc.id,
+        name: typeof data.name === "string" && data.name.trim().length > 0 ? data.name : email,
+      });
+    }
+  });
+  return result;
+}
+
+// Writes a notification doc for one recipient. The sendUserNotificationPush
+// trigger below picks this up and delivers the push.
+async function notifyUser({ recipientUserId, type, title, body, action, actorUserId, actorName, extra }) {
+  const db = getFirestore();
+  await db
+    .collection("users")
+    .doc(recipientUserId)
+    .collection("notifications")
+    .add({
+      type,
+      title,
+      body,
+      action: action || null,
+      actorUserId: actorUserId || null,
+      actorName: actorName || null,
+      recipientUserId,
+      createdAt: new Date(),
+      read: false,
+      ...(extra || {}),
+    });
+}
+
+exports.sendUserNotificationPush = onDocumentCreated(
   "users/{recipientUserId}/notifications/{notificationId}",
   async (event) => {
     const recipientUserId = event.params.recipientUserId;
@@ -144,7 +209,7 @@ exports.sendClockEventPush = onDocumentCreated(
     }
 
     const notification = snapshot.data() || {};
-    if (notification.type !== "clock_event") {
+    if (!Object.values(NOTIFICATION_TYPES).includes(notification.type)) {
       return;
     }
 
@@ -155,14 +220,16 @@ exports.sendClockEventPush = onDocumentCreated(
     }
 
     const payload = {
-      title: notification.title || "Clock Update",
-      body: notification.body || "A clock event was recorded.",
+      title: notification.title || "MainBase",
+      body: notification.body || "You have a new notification.",
       data: {
-        type: "clock_event",
+        type: String(notification.type || ""),
         action: String(notification.action || ""),
         actorUserId: String(notification.actorUserId || ""),
         actorName: String(notification.actorName || ""),
         report: String(notification.report || ""),
+        projectId: String(notification.projectId || ""),
+        taskId: String(notification.taskId || ""),
       },
     };
 
@@ -198,7 +265,8 @@ exports.sendClockEventPush = onDocumentCreated(
       expoResponse = await sendExpoPushNotifications(expoPushTokens, payload);
     }
 
-    logger.info("Clock event push send result", {
+    logger.info("Notification push send result", {
+      type: notification.type,
       fcmSuccessCount: fcmResponse?.successCount || 0,
       fcmFailureCount: fcmResponse?.failureCount || 0,
       expoSuccessCount: expoResponse?.successCount || 0,
@@ -226,7 +294,7 @@ exports.createClockEventNotification = onCall(async (request) => {
     throw new HttpsError("permission-denied", "You can only notify for your own clock events.");
   }
 
-  if (action !== "clock_in" && action !== "clock_out") {
+  if (action !== CLOCK_ACTIONS.CLOCK_IN && action !== CLOCK_ACTIONS.CLOCK_OUT) {
     throw new HttpsError("invalid-argument", "action must be clock_in or clock_out.");
   }
 
@@ -236,9 +304,9 @@ exports.createClockEventNotification = onCall(async (request) => {
   const actorSnap = await db.collection("users").doc(actorUserId).get();
   const actorData = actorSnap.exists ? actorSnap.data() || {} : {};
   const actorName = typeof actorData.name === "string" ? actorData.name : "Someone";
-  const actionLabel = action === "clock_in" ? "clocked in" : "clocked out";
+  const actionLabel = action === CLOCK_ACTIONS.CLOCK_IN ? "clocked in" : "clocked out";
   const notificationBody =
-    action === "clock_out" && reportText.length > 0
+    action === CLOCK_ACTIONS.CLOCK_OUT && reportText.length > 0
       ? `${actorName} clocked out: ${reportText}`
       : `${actorName} ${actionLabel}`;
   const allUsersSnap = await db.collection("users").get();
@@ -259,7 +327,7 @@ exports.createClockEventNotification = onCall(async (request) => {
       .doc(userDoc.id)
       .collection("notifications")
       .add({
-        type: "clock_event",
+        type: NOTIFICATION_TYPES.CLOCK_EVENT,
         title: "Clock Update",
         body: notificationBody,
         action,
@@ -330,3 +398,239 @@ exports.setEmployeeStatus = onCall(async (request) => {
   return { success: true };
 });
 
+// Fires when a task's assigneeEmail is set or changed. Notifies only the
+// (newly) assigned person, and skips the write entirely if they assigned the
+// task to themselves.
+exports.onProjectTaskAssigneeChanged = onDocumentWritten(
+  "projects/{projectId}/tasks/{taskId}",
+  async (event) => {
+    const after = event.data?.after?.exists ? event.data.after.data() : null;
+    if (!after) return; // deleted
+
+    const before = event.data?.before?.exists ? event.data.before.data() : null;
+    const newAssignee = (after.assigneeEmail || "").trim().toLowerCase();
+    const oldAssignee = (before?.assigneeEmail || "").trim().toLowerCase();
+    if (!newAssignee || newAssignee === oldAssignee) return;
+
+    const assignedByEmail = (after.assignedByEmail || "").trim().toLowerCase();
+    if (assignedByEmail && assignedByEmail === newAssignee) return; // self-assign
+
+    const { projectId, taskId } = event.params;
+    const db = getFirestore();
+    const [usersByEmail, projectSnap] = await Promise.all([
+      lookupUsersByEmail([newAssignee, assignedByEmail]),
+      db.collection("projects").doc(projectId).get(),
+    ]);
+
+    const recipient = usersByEmail.get(newAssignee);
+    if (!recipient) {
+      logger.warn("No user found for assigned task email.", { projectId, taskId, newAssignee });
+      return;
+    }
+
+    const actor = assignedByEmail ? usersByEmail.get(assignedByEmail) : null;
+    const actorName = actor?.name || "Someone";
+    const projectTitle = projectSnap.exists ? projectSnap.data()?.projectTitle || "a project" : "a project";
+    const taskTitle = after.title || "a task";
+
+    await notifyUser({
+      recipientUserId: recipient.uid,
+      type: NOTIFICATION_TYPES.TASK_ASSIGNED,
+      title: "New task assigned",
+      body: `${actorName} assigned you "${taskTitle}" in ${projectTitle}`,
+      actorUserId: actor?.uid,
+      actorName,
+      extra: { projectId, taskId },
+    });
+  }
+);
+
+// Same as onProjectTaskAssigneeChanged but for subtasks.
+exports.onProjectSubtaskAssigneeChanged = onDocumentWritten(
+  "projects/{projectId}/tasks/{taskId}/subtasks/{subtaskId}",
+  async (event) => {
+    const after = event.data?.after?.exists ? event.data.after.data() : null;
+    if (!after) return; // deleted
+
+    const before = event.data?.before?.exists ? event.data.before.data() : null;
+    const newAssignee = (after.assigneeEmail || "").trim().toLowerCase();
+    const oldAssignee = (before?.assigneeEmail || "").trim().toLowerCase();
+    if (!newAssignee || newAssignee === oldAssignee) return;
+
+    const assignedByEmail = (after.assignedByEmail || "").trim().toLowerCase();
+    if (assignedByEmail && assignedByEmail === newAssignee) return; // self-assign
+
+    const { projectId, taskId, subtaskId } = event.params;
+    const db = getFirestore();
+    const [usersByEmail, projectSnap, taskSnap] = await Promise.all([
+      lookupUsersByEmail([newAssignee, assignedByEmail]),
+      db.collection("projects").doc(projectId).get(),
+      db.collection("projects").doc(projectId).collection("tasks").doc(taskId).get(),
+    ]);
+
+    const recipient = usersByEmail.get(newAssignee);
+    if (!recipient) {
+      logger.warn("No user found for assigned subtask email.", { projectId, taskId, subtaskId, newAssignee });
+      return;
+    }
+
+    const actor = assignedByEmail ? usersByEmail.get(assignedByEmail) : null;
+    const actorName = actor?.name || "Someone";
+    const projectTitle = projectSnap.exists ? projectSnap.data()?.projectTitle || "a project" : "a project";
+    const parentTaskTitle = taskSnap.exists ? taskSnap.data()?.title || "a task" : "a task";
+    const subtaskTitle = after.title || "a subtask";
+
+    await notifyUser({
+      recipientUserId: recipient.uid,
+      type: NOTIFICATION_TYPES.SUBTASK_ASSIGNED,
+      title: "New subtask assigned",
+      body: `${actorName} assigned you "${subtaskTitle}" (${parentTaskTitle}) in ${projectTitle}`,
+      actorUserId: actor?.uid,
+      actorName,
+      extra: { projectId, taskId, subtaskId },
+    });
+  }
+);
+
+// Fires when a project is created or edited and teamMembers gains new
+// entries. Notifies only the newly added members, not the whole roster.
+exports.onProjectTeamMembersChanged = onDocumentWritten(
+  "projects/{projectId}",
+  async (event) => {
+    const after = event.data?.after?.exists ? event.data.after.data() : null;
+    if (!after) return; // deleted
+
+    const before = event.data?.before?.exists ? event.data.before.data() : null;
+    const beforeMembers = new Set(
+      (before?.teamMembers || []).map((email) => (email || "").trim().toLowerCase())
+    );
+    const afterMembers = [...new Set((after.teamMembers || []).map((email) => (email || "").trim().toLowerCase()))];
+
+    const addedByEmail = (after.lastEditedByEmail || after.projectLead || "").trim().toLowerCase();
+    const newMembers = afterMembers.filter((email) => email && !beforeMembers.has(email) && email !== addedByEmail);
+    if (newMembers.length === 0) return;
+
+    const { projectId } = event.params;
+    const usersByEmail = await lookupUsersByEmail([...newMembers, addedByEmail]);
+
+    const actor = addedByEmail ? usersByEmail.get(addedByEmail) : null;
+    const actorName = actor?.name || "Someone";
+    const projectTitle = after.projectTitle || "a project";
+
+    await Promise.all(
+      newMembers.map((email) => {
+        const recipient = usersByEmail.get(email);
+        if (!recipient) {
+          logger.warn("No user found for added team member email.", { projectId, email });
+          return null;
+        }
+        return notifyUser({
+          recipientUserId: recipient.uid,
+          type: NOTIFICATION_TYPES.ADDED_TO_PROJECT,
+          title: "Added to project",
+          body: `${actorName} added you to ${projectTitle}`,
+          actorUserId: actor?.uid,
+          actorName,
+          extra: { projectId },
+        });
+      })
+    );
+  }
+);
+
+// Fires when a task's status transitions to completed (whether via the plain
+// checkbox or via submitting a proof link). Notifies only the project lead,
+// and only about the fact that the task was completed — not the proof-link
+// content. Skips notifying the lead if they completed it themselves.
+exports.onProjectTaskCompleted = onDocumentWritten(
+  "projects/{projectId}/tasks/{taskId}",
+  async (event) => {
+    const after = event.data?.after?.exists ? event.data.after.data() : null;
+    if (!after) return; // deleted
+
+    const before = event.data?.before?.exists ? event.data.before.data() : null;
+    const wasCompleted = before?.status === "completed";
+    const isCompleted = after.status === "completed";
+    if (!isCompleted || wasCompleted) return;
+
+    const { projectId, taskId } = event.params;
+    const db = getFirestore();
+    const projectSnap = await db.collection("projects").doc(projectId).get();
+    if (!projectSnap.exists) return;
+    const projectData = projectSnap.data() || {};
+    const leadEmail = (projectData.projectLead || "").trim().toLowerCase();
+    const completedByEmail = (after.completedByEmail || "").trim().toLowerCase();
+    if (!leadEmail || leadEmail === completedByEmail) return; // lead completed it themselves
+
+    const usersByEmail = await lookupUsersByEmail([leadEmail, completedByEmail]);
+    const recipient = usersByEmail.get(leadEmail);
+    if (!recipient) {
+      logger.warn("No user found for project lead email.", { projectId, taskId, leadEmail });
+      return;
+    }
+
+    const actor = completedByEmail ? usersByEmail.get(completedByEmail) : null;
+    const actorName = actor?.name || "Someone";
+    const projectTitle = projectData.projectTitle || "a project";
+    const taskTitle = after.title || "a task";
+
+    await notifyUser({
+      recipientUserId: recipient.uid,
+      type: NOTIFICATION_TYPES.TASK_COMPLETED,
+      title: "Task completed",
+      body: `${actorName} completed "${taskTitle}" in ${projectTitle}`,
+      actorUserId: actor?.uid,
+      actorName,
+      extra: { projectId, taskId },
+    });
+  }
+);
+
+// Same as onProjectTaskCompleted but for subtasks.
+exports.onProjectSubtaskCompleted = onDocumentWritten(
+  "projects/{projectId}/tasks/{taskId}/subtasks/{subtaskId}",
+  async (event) => {
+    const after = event.data?.after?.exists ? event.data.after.data() : null;
+    if (!after) return; // deleted
+
+    const before = event.data?.before?.exists ? event.data.before.data() : null;
+    const wasCompleted = before?.status === "completed";
+    const isCompleted = after.status === "completed";
+    if (!isCompleted || wasCompleted) return;
+
+    const { projectId, taskId, subtaskId } = event.params;
+    const db = getFirestore();
+    const [projectSnap, taskSnap] = await Promise.all([
+      db.collection("projects").doc(projectId).get(),
+      db.collection("projects").doc(projectId).collection("tasks").doc(taskId).get(),
+    ]);
+    if (!projectSnap.exists) return;
+    const projectData = projectSnap.data() || {};
+    const leadEmail = (projectData.projectLead || "").trim().toLowerCase();
+    const completedByEmail = (after.completedByEmail || "").trim().toLowerCase();
+    if (!leadEmail || leadEmail === completedByEmail) return; // lead completed it themselves
+
+    const usersByEmail = await lookupUsersByEmail([leadEmail, completedByEmail]);
+    const recipient = usersByEmail.get(leadEmail);
+    if (!recipient) {
+      logger.warn("No user found for project lead email.", { projectId, taskId, subtaskId, leadEmail });
+      return;
+    }
+
+    const actor = completedByEmail ? usersByEmail.get(completedByEmail) : null;
+    const actorName = actor?.name || "Someone";
+    const projectTitle = projectData.projectTitle || "a project";
+    const parentTaskTitle = taskSnap.exists ? taskSnap.data()?.title || "a task" : "a task";
+    const subtaskTitle = after.title || "a subtask";
+
+    await notifyUser({
+      recipientUserId: recipient.uid,
+      type: NOTIFICATION_TYPES.SUBTASK_COMPLETED,
+      title: "Subtask completed",
+      body: `${actorName} completed "${subtaskTitle}" (${parentTaskTitle}) in ${projectTitle}`,
+      actorUserId: actor?.uid,
+      actorName,
+      extra: { projectId, taskId, subtaskId },
+    });
+  }
+);

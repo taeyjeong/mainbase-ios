@@ -43,11 +43,41 @@ struct WorkNotificationCard: View {
     private var iconView: some View {
         ZStack {
             Circle()
-                .fill(notification.isClockIn ? AppColors.primary : AppColors.textSecondary.opacity(0.4))
+                .fill(iconTint)
                 .frame(width: 36, height: 36)
-            Image(systemName: notification.isClockIn ? "arrow.right.circle.fill" : "xmark.circle.fill")
+            Image(systemName: iconName)
                 .font(.system(size: 16))
                 .foregroundColor(.white)
+        }
+    }
+
+    private var iconTint: Color {
+        switch notification.notificationType {
+        case .clockEvent:
+            return notification.isClockIn ? AppColors.primary : AppColors.textSecondary.opacity(0.4)
+        case .taskAssigned, .subtaskAssigned:
+            return AppColors.primary
+        case .addedToProject:
+            return AppColors.primary
+        case .taskCompleted, .subtaskCompleted:
+            return AppColors.primary
+        case nil:
+            return AppColors.textSecondary.opacity(0.4)
+        }
+    }
+
+    private var iconName: String {
+        switch notification.notificationType {
+        case .clockEvent:
+            return notification.isClockIn ? "arrow.right.circle.fill" : "xmark.circle.fill"
+        case .taskAssigned, .subtaskAssigned:
+            return "checklist"
+        case .addedToProject:
+            return "person.crop.circle.badge.plus"
+        case .taskCompleted, .subtaskCompleted:
+            return "checkmark.circle.fill"
+        case nil:
+            return "bell.fill"
         }
     }
 

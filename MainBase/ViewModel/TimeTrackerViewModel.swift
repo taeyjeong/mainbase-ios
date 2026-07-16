@@ -77,7 +77,7 @@ final class TimeTrackerViewModel: ObservableObject {
             "isOnline": true,
             "clockInTime": Timestamp(date: now)
         ], merge: true)
-        await notifyClockEvent(action: "clock_in")
+        await notifyClockEvent(action: .clockIn)
         isSaving = false
     }
 
@@ -111,14 +111,14 @@ final class TimeTrackerViewModel: ObservableObject {
                     "timestamp": Timestamp(date: now)
                 ])
             }
-            await notifyClockEvent(action: "clock_out", report: trimmedReport)
+            await notifyClockEvent(action: .clockOut, report: trimmedReport)
         } catch {}
         isSaving = false
     }
 
-    private func notifyClockEvent(action: String, report: String? = nil) async {
+    private func notifyClockEvent(action: ClockAction, report: String? = nil) async {
         guard let uid = userId else { return }
-        var payload: [String: Any] = ["actorUserId": uid, "action": action]
+        var payload: [String: Any] = ["actorUserId": uid, "action": action.rawValue]
         if let report, !report.isEmpty {
             payload["report"] = report
         }

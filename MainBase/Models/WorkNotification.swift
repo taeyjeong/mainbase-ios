@@ -12,7 +12,8 @@ struct WorkNotification: Identifiable {
     let actorName: String?
     let actorUserId: String?
 
-    var isClockIn: Bool { action == "clock_in" }
+    var notificationType: NotificationType? { NotificationType(rawValue: type) }
+    var isClockIn: Bool { action == ClockAction.clockIn.rawValue }
 
     init(id: String, data: [String: Any]) {
         self.id = id

@@ -77,7 +77,7 @@ struct NotificationsView: View {
             Text("No notifications")
                 .font(.system(size: 18, weight: .semibold))
                 .foregroundColor(AppColors.text)
-            Text("Team clock-in and clock-out updates will appear here.")
+            Text("Clock-in updates, task assignments, and project changes will appear here.")
                 .font(.system(size: 14))
                 .foregroundColor(AppColors.textSecondary)
                 .multilineTextAlignment(.center)

@@ -341,6 +341,7 @@ final class ProjectsViewModel: ObservableObject {
                 "requiresLink": requiresLink,
                 "proofLink": "",
                 "assigneeEmail": resolvedAssignee,
+                "assignedByEmail": currentUserEmail,
                 "completedAt": NSNull(),
                 "order": existingTasks.count,
                 "createdAt": FieldValue.serverTimestamp(),
@@ -363,6 +364,7 @@ final class ProjectsViewModel: ObservableObject {
                 "title": trimmedTitle,
                 "status": ProjectStatus.inProgress.rawValue,
                 "assigneeEmail": assigneeEmail.trimmingCharacters(in: .whitespaces),
+                "assignedByEmail": currentUserEmail,
                 "completedAt": NSNull(),
                 "order": existingSubtasks.count,
                 "createdAt": FieldValue.serverTimestamp(),
@@ -382,6 +384,7 @@ final class ProjectsViewModel: ObservableObject {
                 "proofLink": trimmedLink,
                 "status": trimmedLink.isEmpty ? ProjectStatus.inProgress.rawValue : ProjectStatus.completed.rawValue,
                 "completedAt": trimmedLink.isEmpty ? NSNull() : FieldValue.serverTimestamp(),
+                "completedByEmail": currentUserEmail,
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
             await loadProjects()
@@ -397,6 +400,7 @@ final class ProjectsViewModel: ObservableObject {
                 .collection("subtasks").document(subtaskId).updateData([
                     "status": isCompleted ? ProjectStatus.completed.rawValue : ProjectStatus.inProgress.rawValue,
                     "completedAt": isCompleted ? FieldValue.serverTimestamp() : NSNull(),
+                    "completedByEmail": currentUserEmail,
                     "updatedAt": FieldValue.serverTimestamp(),
                 ])
             await loadProjects()
@@ -411,6 +415,7 @@ final class ProjectsViewModel: ObservableObject {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId).updateData([
                 "status": isCompleted ? ProjectStatus.completed.rawValue : ProjectStatus.inProgress.rawValue,
                 "completedAt": isCompleted ? FieldValue.serverTimestamp() : NSNull(),
+                "completedByEmail": currentUserEmail,
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
             await loadProjects()
@@ -428,6 +433,7 @@ final class ProjectsViewModel: ObservableObject {
                 "title": trimmedTitle,
                 "requiresLink": requiresLink,
                 "assigneeEmail": assigneeEmail.trimmingCharacters(in: .whitespaces),
+                "assignedByEmail": currentUserEmail,
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
             await loadProjects()
@@ -471,6 +477,7 @@ final class ProjectsViewModel: ObservableObject {
                 "projectDescription": trimmedDescription,
                 "projectLead": trimmedLead,
                 "teamMembers": cleanedEmailList(teamMembers),
+                "lastEditedByEmail": currentUserEmail,
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
             await loadProjects()
