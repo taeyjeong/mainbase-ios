@@ -6,7 +6,6 @@ import FirebaseFirestore
 private struct TaskBlueprint {
     let title: String
     let description: String
-    let requiresLink: Bool
     let subtasks: [String]
 }
 
@@ -14,31 +13,26 @@ private let defaultTaskBlueprint: [TaskBlueprint] = [
     TaskBlueprint(
         title: "Generate a blog post about traveling around your city and share Google Doc link",
         description: "Shareable Google Doc link is required to complete this task.",
-        requiresLink: true,
         subtasks: ["Waiting on Ibrahim to publish on website"]
     ),
     TaskBlueprint(
         title: "Use Tourbook app to create an itinerary and share link",
         description: "Create itinerary and attach the link.",
-        requiresLink: true,
         subtasks: []
     ),
     TaskBlueprint(
         title: "Gather reels/photos for content and share Google Drive link",
         description: "Upload media to Drive and share the URL.",
-        requiresLink: true,
         subtasks: ["Create a reel with CapCut, Adobe Premiere, or Instagram Edit", "Choose 10 photos for a carousel"]
     ),
     TaskBlueprint(
         title: "Post reel/carousel/shortened blog post to Facebook group and share post link",
         description: "Include caption and hashtags.",
-        requiresLink: true,
         subtasks: ["Waiting on Cynthia to publish on TikTok"]
     ),
     TaskBlueprint(
         title: "Receive instruction for keyword research, blog optimization, GA4, and Meta Business Suite",
         description: "Track process updates and complete once instruction is done.",
-        requiresLink: false,
         subtasks: []
     ),
 ]
@@ -149,6 +143,7 @@ final class ProjectsViewModel: ObservableObject {
                     title: data["title"] as? String ?? "",
                     status: normalizeStatus(data["status"]),
                     assigneeEmail: data["assigneeEmail"] as? String ?? "",
+                    createdAt: normalizeTimestamp(data["createdAt"]),
                     completedAt: normalizeTimestamp(data["completedAt"]),
                     order: data["order"] as? Int ?? 0
                 )
@@ -217,9 +212,8 @@ final class ProjectsViewModel: ObservableObject {
                             title: taskData["title"] as? String ?? "",
                             description: taskData["description"] as? String ?? "",
                             status: await self.normalizeStatus(taskData["status"]),
-                            requiresLink: taskData["requiresLink"] as? Bool ?? false,
-                            proofLink: taskData["proofLink"] as? String ?? "",
                             assigneeEmail: taskData["assigneeEmail"] as? String ?? "",
+                            createdAt: await self.normalizeTimestamp(taskData["createdAt"]),
                             completedAt: await self.normalizeTimestamp(taskData["completedAt"]),
                             order: taskData["order"] as? Int ?? 0,
                             subtasks: subtasks
@@ -298,8 +292,6 @@ final class ProjectsViewModel: ObservableObject {
                         "title": blueprint.title,
                         "description": blueprint.description,
                         "status": ProjectStatus.inProgress.rawValue,
-                        "requiresLink": blueprint.requiresLink,
-                        "proofLink": "",
                         "assigneeEmail": projectLead,
                         "completedAt": NSNull(),
                         "order": index,
@@ -326,7 +318,7 @@ final class ProjectsViewModel: ObservableObject {
         }
     }
 
-    func submitAddTask(projectId: String, title: String, assigneeEmail: String, requiresLink: Bool) async -> ProjectActionResult {
+    func submitAddTask(projectId: String, title: String, assigneeEmail: String) async -> ProjectActionResult {
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return .failure("Task title is required.") }
         do {
@@ -338,8 +330,6 @@ final class ProjectsViewModel: ObservableObject {
                 "title": trimmedTitle,
                 "description": "",
                 "status": ProjectStatus.inProgress.rawValue,
-                "requiresLink": requiresLink,
-                "proofLink": "",
                 "assigneeEmail": resolvedAssignee,
                 "assignedByEmail": currentUserEmail,
                 "completedAt": NSNull(),
@@ -377,24 +367,21 @@ final class ProjectsViewModel: ObservableObject {
         }
     }
 
-    func submitTaskLink(projectId: String, taskId: String, proofLink: String) async -> ProjectActionResult {
-        let trimmedLink = proofLink.trimmingCharacters(in: .whitespaces)
-        do {
-            try await db.collection("projects").document(projectId).collection("tasks").document(taskId).updateData([
-                "proofLink": trimmedLink,
-                "status": trimmedLink.isEmpty ? ProjectStatus.inProgress.rawValue : ProjectStatus.completed.rawValue,
-                "completedAt": trimmedLink.isEmpty ? NSNull() : FieldValue.serverTimestamp(),
-                "completedByEmail": currentUserEmail,
-                "updatedAt": FieldValue.serverTimestamp(),
-            ])
-            await loadProjects()
-            return .ok
-        } catch {
-            return .failure("Could not update task link.")
+    func canManage(projectId: String, assigneeEmail: String) -> Bool {
+        if currentUserIsAdmin { return true }
+        if let project = projects.first(where: { $0.id == projectId }) ?? archivedProjects.first(where: { $0.id == projectId }),
+           !project.projectLead.isEmpty, project.projectLead.caseInsensitiveCompare(currentUserEmail) == .orderedSame {
+            return true
         }
+        return !assigneeEmail.isEmpty && assigneeEmail.caseInsensitiveCompare(currentUserEmail) == .orderedSame
     }
 
     func submitCompleteSubtask(projectId: String, taskId: String, subtaskId: String, isCompleted: Bool) async -> ProjectActionResult {
+        guard let task = projects.first(where: { $0.id == projectId })?.tasks.first(where: { $0.id == taskId }),
+              let subtask = task.subtasks.first(where: { $0.id == subtaskId }),
+              canManage(projectId: projectId, assigneeEmail: subtask.assigneeEmail) else {
+            return .failure("Only the assignee, project lead, or an admin can complete this subtask.")
+        }
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId)
                 .collection("subtasks").document(subtaskId).updateData([
@@ -411,6 +398,10 @@ final class ProjectsViewModel: ObservableObject {
     }
 
     func submitToggleTaskCompletion(projectId: String, taskId: String, isCompleted: Bool) async -> ProjectActionResult {
+        guard let task = projects.first(where: { $0.id == projectId })?.tasks.first(where: { $0.id == taskId }),
+              canManage(projectId: projectId, assigneeEmail: task.assigneeEmail) else {
+            return .failure("Only the assignee, project lead, or an admin can complete this task.")
+        }
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId).updateData([
                 "status": isCompleted ? ProjectStatus.completed.rawValue : ProjectStatus.inProgress.rawValue,
@@ -425,13 +416,16 @@ final class ProjectsViewModel: ObservableObject {
         }
     }
 
-    func submitEditTask(projectId: String, taskId: String, title: String, requiresLink: Bool, assigneeEmail: String) async -> ProjectActionResult {
+    func submitEditTask(projectId: String, taskId: String, title: String, assigneeEmail: String) async -> ProjectActionResult {
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return .failure("Task title is required.") }
+        guard let existingTask = projects.first(where: { $0.id == projectId })?.tasks.first(where: { $0.id == taskId }),
+              canManage(projectId: projectId, assigneeEmail: existingTask.assigneeEmail) else {
+            return .failure("Only the assignee, project lead, or an admin can edit this task.")
+        }
         do {
             try await db.collection("projects").document(projectId).collection("tasks").document(taskId).updateData([
                 "title": trimmedTitle,
-                "requiresLink": requiresLink,
                 "assigneeEmail": assigneeEmail.trimmingCharacters(in: .whitespaces),
                 "assignedByEmail": currentUserEmail,
                 "updatedAt": FieldValue.serverTimestamp(),

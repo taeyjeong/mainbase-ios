@@ -7,7 +7,6 @@ struct AddTaskSheet: View {
 
     @State private var title = ""
     @State private var assigneeEmail = ""
-    @State private var requiresLink = false
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -17,13 +16,7 @@ struct AddTaskSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     FormTextField(label: "Task Title", placeholder: "e.g. Share the itinerary link", text: $title)
 
-                    AssigneePicker(selection: $assigneeEmail, emails: vm.assignableUserEmails)
-
-                    CheckboxToggle(isOn: $requiresLink) {
-                        Text("Requires a proof link to complete")
-                            .font(.system(size: 15))
-                            .foregroundColor(AppColors.text)
-                    }
+                    AssigneePicker(selection: $assigneeEmail, emails: vm.assignableUserEmails, displayName: vm.displayName(forEmail:))
 
                     if let errorMessage {
                         Text(errorMessage)
@@ -57,8 +50,7 @@ struct AddTaskSheet: View {
         let result = await vm.submitAddTask(
             projectId: projectId,
             title: title,
-            assigneeEmail: assigneeEmail,
-            requiresLink: requiresLink
+            assigneeEmail: assigneeEmail
         )
         isSaving = false
         if result.success {
@@ -72,6 +64,7 @@ struct AddTaskSheet: View {
 struct AssigneePicker: View {
     @Binding var selection: String
     let emails: [String]
+    var displayName: (String) -> String = { $0 }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -81,7 +74,7 @@ struct AssigneePicker: View {
             Picker("Assignee", selection: $selection) {
                 Text("Unassigned").tag("")
                 ForEach(emails, id: \.self) { email in
-                    Text(email).tag(email)
+                    Text(displayName(email)).tag(email)
                 }
             }
             .pickerStyle(.menu)

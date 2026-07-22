@@ -15,6 +15,7 @@ struct ProjectSubtask: Identifiable {
     var title: String
     var status: ProjectStatus
     var assigneeEmail: String
+    var createdAt: Date?
     var completedAt: Date?
     var order: Int
 
@@ -26,9 +27,8 @@ struct ProjectTask: Identifiable {
     var title: String
     var description: String
     var status: ProjectStatus
-    var requiresLink: Bool
-    var proofLink: String
     var assigneeEmail: String
+    var createdAt: Date?
     var completedAt: Date?
     var order: Int
     var subtasks: [ProjectSubtask]

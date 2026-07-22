@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 
 struct ProjectDetailView: View {
@@ -11,6 +12,9 @@ struct ProjectDetailView: View {
     @State private var savingTaskIds: Set<String> = []
     @State private var savingSubtaskIds: Set<String> = []
     @State private var errorMessage: String?
+    @State private var now = Date()
+
+    private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
 
     private var currentProject: Project {
         vm.projects.first(where: { $0.id == project.id }) ?? project
@@ -39,6 +43,10 @@ struct ProjectDetailView: View {
                 ForEach(currentProject.tasks) { projectTask in
                     TaskRow(
                         projectTask: projectTask,
+                        now: now,
+                        displayName: vm.displayName(forEmail:),
+                        canManageTask: vm.canManage(projectId: project.id, assigneeEmail: projectTask.assigneeEmail),
+                        canManageSubtask: { vm.canManage(projectId: project.id, assigneeEmail: $0.assigneeEmail) },
                         isExpanded: expandedTaskIds.contains(projectTask.id),
                         isSaving: savingTaskIds.contains(projectTask.id),
                         savingSubtaskIds: savingSubtaskIds,
@@ -71,6 +79,7 @@ struct ProjectDetailView: View {
             }
         }
         .listStyle(.plain)
+        .onReceive(clockTimer) { now = $0 }
         .background(AppColors.background.ignoresSafeArea())
         .navigationTitle(currentProject.projectTitle)
         .navigationBarTitleDisplayMode(.inline)
@@ -132,6 +141,10 @@ struct ProjectDetailView: View {
 
 private struct TaskRow: View {
     let projectTask: ProjectTask
+    let now: Date
+    let displayName: (String) -> String
+    let canManageTask: Bool
+    let canManageSubtask: (ProjectSubtask) -> Bool
     let isExpanded: Bool
     let isSaving: Bool
     let savingSubtaskIds: Set<String>
@@ -149,7 +162,7 @@ private struct TaskRow: View {
                 CheckboxToggle(isOn: Binding(get: { projectTask.isCompleted }, set: onToggleComplete)) {
                     EmptyView()
                 }
-                .disabled(isSaving)
+                .disabled(isSaving || !canManageTask)
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(projectTask.title)
@@ -157,8 +170,13 @@ private struct TaskRow: View {
                         .foregroundColor(AppColors.text)
                         .strikethrough(projectTask.isCompleted)
                     if !projectTask.assigneeEmail.isEmpty {
-                        Text(projectTask.assigneeEmail)
+                        Text(displayName(projectTask.assigneeEmail))
                             .font(.system(size: 12))
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                    if let durationText = durationText {
+                        Text(durationText)
+                            .font(.system(size: 11))
                             .foregroundColor(AppColors.textSecondary)
                     }
                     if !projectTask.subtasks.isEmpty {
@@ -173,8 +191,9 @@ private struct TaskRow: View {
                 Spacer()
 
                 Menu {
-                    Button("Edit", action: onEdit)
-                    Button("Add Subtask", action: onAddSubtask)
+                    if canManageTask {
+                        Button("Edit", action: onEdit)
+                    }
                     Button("Delete", role: .destructive, action: onDelete)
                 } label: {
                     Image(systemName: "ellipsis")
@@ -182,11 +201,24 @@ private struct TaskRow: View {
                 }
             }
 
+            Button(action: onAddSubtask) {
+                HStack(spacing: 4) {
+                    Image(systemName: "plus")
+                    Text("Add Subtask")
+                }
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColors.primary)
+            }
+            .padding(.leading, 28)
+
             if isExpanded {
                 VStack(alignment: .leading, spacing: 8) {
                     ForEach(projectTask.subtasks) { subtask in
                         SubtaskRow(
                             subtask: subtask,
+                            now: now,
+                            displayName: displayName,
+                            canComplete: canManageSubtask(subtask),
                             isSaving: savingSubtaskIds.contains(subtask.id),
                             onToggle: { onToggleSubtask(subtask, $0) },
                             onDelete: { onDeleteSubtask(subtask) }
@@ -198,29 +230,64 @@ private struct TaskRow: View {
         }
         .padding(.vertical, 6)
     }
+
+    private var durationText: String? {
+        guard let createdAt = projectTask.createdAt else { return nil }
+        if projectTask.isCompleted {
+            guard let completedAt = projectTask.completedAt else { return nil }
+            return "Took \(DurationFormatting.daysHours(from: createdAt, to: completedAt))"
+        } else {
+            return "\(DurationFormatting.daysHours(from: createdAt, to: now)) since created"
+        }
+    }
 }
 
 private struct SubtaskRow: View {
     let subtask: ProjectSubtask
+    let now: Date
+    let displayName: (String) -> String
+    let canComplete: Bool
     let isSaving: Bool
     let onToggle: (Bool) -> Void
     let onDelete: () -> Void
 
     var body: some View {
-        HStack {
+        HStack(alignment: .top) {
             CheckboxToggle(isOn: Binding(get: { subtask.isCompleted }, set: onToggle)) {
-                Text(subtask.title)
-                    .font(.system(size: 13))
-                    .foregroundColor(AppColors.text)
-                    .strikethrough(subtask.isCompleted)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(subtask.title)
+                        .font(.system(size: 13))
+                        .foregroundColor(AppColors.text)
+                        .strikethrough(subtask.isCompleted)
+                    if !subtask.assigneeEmail.isEmpty {
+                        Text(displayName(subtask.assigneeEmail))
+                            .font(.system(size: 11))
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                    if let durationText = durationText {
+                        Text(durationText)
+                            .font(.system(size: 11))
+                            .foregroundColor(AppColors.textSecondary)
+                    }
+                }
             }
-            .disabled(isSaving)
+            .disabled(isSaving || !canComplete)
             Spacer()
             Button(action: onDelete) {
                 Image(systemName: "trash")
                     .font(.system(size: 12))
                     .foregroundColor(AppColors.textSecondary)
             }
+        }
+    }
+
+    private var durationText: String? {
+        guard let createdAt = subtask.createdAt else { return nil }
+        if subtask.isCompleted {
+            guard let completedAt = subtask.completedAt else { return nil }
+            return "Took \(DurationFormatting.daysHours(from: createdAt, to: completedAt))"
+        } else {
+            return "\(DurationFormatting.daysHours(from: createdAt, to: now)) since created"
         }
     }
 }

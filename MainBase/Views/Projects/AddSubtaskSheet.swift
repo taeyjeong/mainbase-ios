@@ -17,7 +17,7 @@ struct AddSubtaskSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     FormTextField(label: "Subtask Title", placeholder: "e.g. Choose 10 photos for a carousel", text: $title)
 
-                    AssigneePicker(selection: $assigneeEmail, emails: vm.assignableUserEmails)
+                    AssigneePicker(selection: $assigneeEmail, emails: vm.assignableUserEmails, displayName: vm.displayName(forEmail:))
 
                     if let errorMessage {
                         Text(errorMessage)

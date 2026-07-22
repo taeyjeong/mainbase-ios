@@ -8,8 +8,6 @@ struct EditTaskSheet: View {
 
     @State private var title: String
     @State private var assigneeEmail: String
-    @State private var requiresLink: Bool
-    @State private var proofLink: String
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -19,8 +17,6 @@ struct EditTaskSheet: View {
         self.projectTask = projectTask
         _title = State(initialValue: projectTask.title)
         _assigneeEmail = State(initialValue: projectTask.assigneeEmail)
-        _requiresLink = State(initialValue: projectTask.requiresLink)
-        _proofLink = State(initialValue: projectTask.proofLink)
     }
 
     var body: some View {
@@ -29,23 +25,7 @@ struct EditTaskSheet: View {
                 VStack(alignment: .leading, spacing: 20) {
                     FormTextField(label: "Task Title", placeholder: "Task title", text: $title)
 
-                    AssigneePicker(selection: $assigneeEmail, emails: vm.assignableUserEmails)
-
-                    CheckboxToggle(isOn: $requiresLink) {
-                        Text("Requires a proof link to complete")
-                            .font(.system(size: 15))
-                            .foregroundColor(AppColors.text)
-                    }
-
-                    if requiresLink {
-                        FormTextField(
-                            label: "Proof Link",
-                            placeholder: "https://...",
-                            text: $proofLink,
-                            keyboardType: .URL,
-                            autocapitalization: .none
-                        )
-                    }
+                    AssigneePicker(selection: $assigneeEmail, emails: vm.assignableUserEmails, displayName: vm.displayName(forEmail:))
 
                     if let errorMessage {
                         Text(errorMessage)
@@ -77,31 +57,17 @@ struct EditTaskSheet: View {
         isSaving = true
         errorMessage = nil
 
-        let detailsResult = await vm.submitEditTask(
+        let result = await vm.submitEditTask(
             projectId: projectId,
             taskId: projectTask.id,
             title: title,
-            requiresLink: requiresLink,
             assigneeEmail: assigneeEmail
         )
-        guard detailsResult.success else {
-            isSaving = false
-            errorMessage = detailsResult.error
-            return
-        }
-
-        if proofLink.trimmingCharacters(in: .whitespaces) != projectTask.proofLink {
-            let linkResult = await vm.submitTaskLink(projectId: projectId, taskId: projectTask.id, proofLink: proofLink)
-            isSaving = false
-            if linkResult.success {
-                dismiss()
-            } else {
-                errorMessage = linkResult.error
-            }
-            return
-        }
-
         isSaving = false
-        dismiss()
+        if result.success {
+            dismiss()
+        } else {
+            errorMessage = result.error
+        }
     }
 }
