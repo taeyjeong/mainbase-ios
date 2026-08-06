@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ReportsListView: View {
     @StateObject private var vm = ReportsViewModel()
+    @State private var chattingReport: Report?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -22,12 +23,13 @@ struct ReportsListView: View {
                 } else {
                     VStack(spacing: 0) {
                         ForEach(vm.reportsForSelectedMonth) { report in
-                            ReportRow(report: report)
+                            ReportRow(report: report, onOpenChat: { chattingReport = report })
                             if report.id != vm.reportsForSelectedMonth.last?.id {
                                 Divider()
                             }
                         }
                     }
+                    .padding(.vertical, 8)
                 }
             }
         }
@@ -37,6 +39,9 @@ struct ReportsListView: View {
         .onDisappear { vm.stopListening() }
         .onChange(of: vm.selectedUserId) { _, _ in
             vm.selectedMonth = MonthGrouping.startOfMonth(for: Date())
+        }
+        .sheet(item: $chattingReport) { report in
+            ReportChatView(report: report, vm: vm)
         }
     }
 
@@ -135,6 +140,7 @@ struct ReportsListView: View {
 
 private struct ReportRow: View {
     let report: Report
+    let onOpenChat: () -> Void
 
     private static let formatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -144,22 +150,45 @@ private struct ReportRow: View {
     }()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                Text(report.name)
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(AppColors.text)
-                Spacer()
-                Text(Self.formatter.string(from: report.timestamp))
-                    .font(.system(size: 14))
-                    .foregroundColor(AppColors.textSecondary)
+        let parsed = ReportTextLinks.extract(from: report.reportText)
+
+        HStack(alignment: .center, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(alignment: .top) {
+                    Text(report.name)
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundColor(AppColors.text)
+                    Spacer()
+                    Text(Self.formatter.string(from: report.timestamp))
+                        .font(.system(size: 14, weight: .bold))
+                        .foregroundColor(AppColors.textSecondary)
+                }
+                if !parsed.cleanedText.isEmpty {
+                    Text(parsed.cleanedText)
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                ReportLinksGrid(links: parsed.links)
             }
-            Text(report.reportText)
-                .font(.system(size: 14))
-                .foregroundColor(AppColors.textSecondary)
-                .fixedSize(horizontal: false, vertical: true)
+            messageButton
         }
         .padding(.vertical, 8)
+    }
+
+    private var messageButton: some View {
+        Button(action: onOpenChat) {
+            HStack(spacing: 3) {
+                Image(systemName: "message")
+                    .font(.system(size: 13))
+                if report.messageCount > 0 {
+                    Text("\(report.messageCount)")
+                        .font(.system(size: 12, weight: .medium))
+                }
+            }
+            .foregroundColor(AppColors.textSecondary)
+        }
+        .buttonStyle(.borderless)
     }
 }
 

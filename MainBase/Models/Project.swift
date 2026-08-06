@@ -5,9 +5,25 @@ enum ProjectStatus: String {
     case completed = "completed"
 }
 
-enum ProjectLabel: String {
-    case standard = ""
-    case socials = "socials"
+enum ProjectLabel: String, CaseIterable {
+    case marketing
+    case development
+
+    var displayName: String {
+        switch self {
+        case .marketing: return "Marketing"
+        case .development: return "Development"
+        }
+    }
+
+    var sublabelOptions: [String] {
+        switch self {
+        case .marketing:
+            return ["SEO", "Meta Ads", "Social Media", "Analytics", "Influencer collabs", "IRL", "Other"]
+        case .development:
+            return ["Systems", "Mobile", "Web", "WordPress", "Design", "IRL", "Other"]
+        }
+    }
 }
 
 struct ProjectSubtask: Identifiable {
@@ -42,7 +58,11 @@ struct Project: Identifiable {
     var projectDescription: String
     var projectLead: String
     var teamMembers: [String]
-    var label: ProjectLabel
+    var projectMainId: String?
+    var label: ProjectLabel?
+    var sublabels: [String]
+    var photoURLs: [String]
+    var budget: Double?
     var status: ProjectStatus
     var isArchived: Bool
     var createdAt: Date?

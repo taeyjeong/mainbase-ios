@@ -90,6 +90,29 @@ service cloud.firestore {
           allow write: if isSignedIn();
         }
       }
+
+      match /chatMessages/{messageId} {
+        allow read: if isSignedIn();
+        allow create: if isSignedIn() && request.resource.data.senderEmail == currentUser().email;
+        // Any team member can toggle isPinned on any message (max-3-pinned is enforced client-side).
+        allow update: if isSignedIn();
+        allow delete: if false;
+      }
+
+      match /expenses/{expenseId} {
+        allow read, write: if isSignedIn();
+      }
+    }
+
+    // ---------------- projectMains ----------------
+    match /projectMains/{mainId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isAdmin();
+    }
+
+    // ---------------- operationsItems ----------------
+    match /operationsItems/{itemId} {
+      allow read, write: if isSignedIn();
     }
   }
 }

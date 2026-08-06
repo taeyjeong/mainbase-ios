@@ -6,4 +6,5 @@ struct Report: Identifiable {
     let name: String
     let reportText: String
     let timestamp: Date
+    let messageCount: Int
 }

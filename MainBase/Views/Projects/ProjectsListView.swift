@@ -19,9 +19,19 @@ struct ProjectsListView: View {
                     List {
                         ForEach(vm.projects) { project in
                             NavigationLink(value: project.id) {
-                                ProjectRow(project: project)
+                                ProjectRow(
+                                    project: project,
+                                    main: vm.projectMain(withId: project.projectMainId),
+                                    teamMemberTag: vm.teamMemberTag(forEmail:)
+                                )
                             }
-                            .listRowBackground(AppColors.cardBackground)
+                            .buttonStyle(.plain)
+                            .navigationLinkIndicatorVisibility(.hidden)
+                            .listRowInsets(EdgeInsets())
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
                             .swipeActions(edge: .trailing, allowsFullSwipe: true) {
                                 if vm.canDelete(project) {
                                     Button(role: .destructive) {
@@ -50,12 +60,12 @@ struct ProjectsListView: View {
                         }
                     }
                     .listStyle(.plain)
-                    .listRowSeparatorTint(AppColors.border)
                     .refreshable { await vm.loadProjects() }
                 }
             }
             .background(AppColors.background.ignoresSafeArea())
             .navigationTitle("Projects")
+            .navigationBarTitleDisplayMode(.inline)
             .navigationDestination(for: String.self) { projectId in
                 if let project = vm.projects.first(where: { $0.id == projectId }) {
                     ProjectDetailView(project: project, vm: vm)
@@ -124,44 +134,95 @@ struct ProjectsListView: View {
     }
 }
 
+private let projectCardStartDateFormatter: DateFormatter = {
+    let formatter = DateFormatter()
+    formatter.dateStyle = .medium
+    return formatter
+}()
+
 private struct ProjectRow: View {
     let project: Project
+    let main: ProjectMain?
+    let teamMemberTag: (String) -> String
 
     private var completedTaskCount: Int {
         project.tasks.filter { $0.isCompleted }.count
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(alignment: .top) {
-                Text(project.projectTitle)
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(AppColors.text)
-                Spacer()
-                StatusBadge(status: project.status)
-            }
-            if !project.projectDescription.isEmpty {
-                DescriptionText(text: project.projectDescription, lineLimit: 2)
-            }
-            Text("\(completedTaskCount)/\(project.tasks.count) tasks complete")
-                .font(.system(size: 13))
-                .foregroundColor(AppColors.textSecondary)
-        }
-        .padding(.vertical, 8)
+    private var percentComplete: Int {
+        guard !project.tasks.isEmpty else { return 0 }
+        return Int((Double(completedTaskCount) / Double(project.tasks.count) * 100).rounded())
     }
-}
 
-struct StatusBadge: View {
-    let status: ProjectStatus
+    private var cardColor: Color {
+        guard let main else { return AppColors.textSecondary }
+        return Color(hex: main.colorHex)
+    }
+
+    private var leadersMembersLine: String {
+        var parts: [String] = ["Lead: \(teamMemberTag(project.projectLead))"]
+        if !project.teamMembers.isEmpty {
+            parts.append(project.teamMembers.map(teamMemberTag).joined(separator: ", "))
+        }
+        return parts.joined(separator: " • ")
+    }
 
     var body: some View {
-        Text(status == .completed ? "Completed" : "In Progress")
-            .font(.system(size: 12, weight: .medium))
-            .foregroundColor(status == .completed ? .white : AppColors.primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(status == .completed ? AppColors.primary : AppColors.primary.opacity(0.12))
-            .clipShape(Capsule())
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .top) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(project.projectTitle)
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(.white)
+                    Text(main?.name ?? "Unassigned")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.85))
+                }
+                Spacer()
+                VStack(alignment: .trailing, spacing: 4) {
+                    if let createdAt = project.createdAt {
+                        Text("🗓️ \(projectCardStartDateFormatter.string(from: createdAt))")
+                            .font(.system(size: 12, weight: .bold))
+                            .foregroundColor(.white)
+                    }
+                    Text("\(completedTaskCount)/\(project.tasks.count) tasks")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white.opacity(0.9))
+                    Text("\(percentComplete)% complete")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 4)
+                        .background(Color.white.opacity(0.22))
+                        .clipShape(Capsule())
+                }
+            }
+
+            Text(leadersMembersLine)
+                .font(.system(size: 12))
+                .foregroundColor(.white.opacity(0.9))
+                .lineLimit(1)
+                .truncationMode(.tail)
+
+            if !project.sublabels.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(project.sublabels, id: \.self) { sublabel in
+                            Text(sublabel)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(Color.white.opacity(0.22))
+                                .clipShape(Capsule())
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 16).fill(cardColor))
     }
 }
 

@@ -1,6 +1,6 @@
 const { initializeApp } = require("firebase-admin/app");
 const { getMessaging } = require("firebase-admin/messaging");
-const { getFirestore } = require("firebase-admin/firestore");
+const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { logger } = require("firebase-functions");
@@ -15,6 +15,8 @@ const NOTIFICATION_TYPES = Object.freeze({
   ADDED_TO_PROJECT: "added_to_project",
   TASK_COMPLETED: "task_completed",
   SUBTASK_COMPLETED: "subtask_completed",
+  CHAT_MESSAGE: "chat_message",
+  REPORT_MESSAGE: "report_message",
 });
 
 // Mirrors the ClockAction enum in MainBase/Models/NotificationType.swift.
@@ -22,6 +24,14 @@ const CLOCK_ACTIONS = Object.freeze({
   CLOCK_IN: "clock_in",
   CLOCK_OUT: "clock_out",
 });
+
+// Mirrors formattedDisplayName in MainBase/Utilities/PersonDisplayName.swift: "Sarah" + "Kim" -> "Sarah K.".
+function formatDisplayName(name, surname) {
+  const safeName = typeof name === "string" && name.trim().length > 0 ? name.trim() : "Someone";
+  const trimmedSurname = typeof surname === "string" ? surname.trim() : "";
+  if (!trimmedSurname) return safeName;
+  return `${safeName} ${trimmedSurname.charAt(0)}.`;
+}
 
 function isExpoPushToken(token) {
   return (
@@ -168,11 +178,34 @@ async function lookupUsersByEmail(emails) {
     if (email && wanted.has(email)) {
       result.set(email, {
         uid: doc.id,
-        name: typeof data.name === "string" && data.name.trim().length > 0 ? data.name : email,
+        name: typeof data.name === "string" && data.name.trim().length > 0 ? formatDisplayName(data.name, data.surname) : email,
       });
     }
   });
   return result;
+}
+
+// All admin users, for the "admin sees every task action" notification rule.
+async function getAdminUsers() {
+  const db = getFirestore();
+  const snap = await db.collection("users").where("admin", "==", true).get();
+  return snap.docs.map((doc) => {
+    const data = doc.data() || {};
+    return { uid: doc.id, name: formatDisplayName(data.name, data.surname) };
+  });
+}
+
+// Notifies every admin about a task/subtask action, skipping anyone in `excludeUids`
+// (typically the actor and/or whoever already got the primary/personalized notification,
+// so an admin doesn't get double-pinged for the same event).
+async function notifyAdmins({ excludeUids, type, title, body, actorUserId, actorName, extra }) {
+  const admins = await getAdminUsers();
+  const exclude = new Set((excludeUids || []).filter(Boolean));
+  await Promise.all(
+    admins
+      .filter((admin) => !exclude.has(admin.uid))
+      .map((admin) => notifyUser({ recipientUserId: admin.uid, type, title, body, actorUserId, actorName, extra }))
+  );
 }
 
 // Writes a notification doc for one recipient. The sendUserNotificationPush
@@ -230,6 +263,8 @@ exports.sendUserNotificationPush = onDocumentCreated(
         report: String(notification.report || ""),
         projectId: String(notification.projectId || ""),
         taskId: String(notification.taskId || ""),
+        reportId: String(notification.reportId || ""),
+        reportOwnerId: String(notification.reportOwnerId || ""),
       },
     };
 
@@ -303,7 +338,7 @@ exports.createClockEventNotification = onCall(async (request) => {
   const db = getFirestore();
   const actorSnap = await db.collection("users").doc(actorUserId).get();
   const actorData = actorSnap.exists ? actorSnap.data() || {} : {};
-  const actorName = typeof actorData.name === "string" ? actorData.name : "Someone";
+  const actorName = formatDisplayName(actorData.name, actorData.surname);
   const actionLabel = action === CLOCK_ACTIONS.CLOCK_IN ? "clocked in" : "clocked out";
   const notificationBody =
     action === CLOCK_ACTIONS.CLOCK_OUT && reportText.length > 0
@@ -311,7 +346,17 @@ exports.createClockEventNotification = onCall(async (request) => {
       : `${actorName} ${actionLabel}`;
   const allUsersSnap = await db.collection("users").get();
 
-  const recipientDocs = allUsersSnap.docs.filter((doc) => doc.id !== actorUserId);
+  // Non-admins only hear about a coworker's clock activity while clocked in themselves.
+  // Admins instead pick an explicit preference (Profile > Clock Notifications): "all"
+  // (every clock event regardless of their own status) or "none" (opt out entirely).
+  const recipientDocs = allUsersSnap.docs.filter((doc) => {
+    if (doc.id === actorUserId) return false;
+    const data = doc.data() || {};
+    if (data.admin === true) {
+      return (data.clockNotificationPreference || "all") !== "none";
+    }
+    return data.isOnline === true;
+  });
 
   if (recipientDocs.length === 0) {
     logger.warn("No users found to notify for clock event.", {
@@ -413,7 +458,7 @@ exports.onProjectTaskAssigneeChanged = onDocumentWritten(
     if (!newAssignee || newAssignee === oldAssignee) return;
 
     const assignedByEmail = (after.assignedByEmail || "").trim().toLowerCase();
-    if (assignedByEmail && assignedByEmail === newAssignee) return; // self-assign
+    const isSelfAssign = Boolean(assignedByEmail) && assignedByEmail === newAssignee;
 
     const { projectId, taskId } = event.params;
     const db = getFirestore();
@@ -423,21 +468,30 @@ exports.onProjectTaskAssigneeChanged = onDocumentWritten(
     ]);
 
     const recipient = usersByEmail.get(newAssignee);
-    if (!recipient) {
-      logger.warn("No user found for assigned task email.", { projectId, taskId, newAssignee });
-      return;
-    }
-
     const actor = assignedByEmail ? usersByEmail.get(assignedByEmail) : null;
     const actorName = actor?.name || "Someone";
     const projectTitle = projectSnap.exists ? projectSnap.data()?.projectTitle || "a project" : "a project";
     const taskTitle = after.title || "a task";
 
-    await notifyUser({
-      recipientUserId: recipient.uid,
+    if (recipient && !isSelfAssign) {
+      await notifyUser({
+        recipientUserId: recipient.uid,
+        type: NOTIFICATION_TYPES.TASK_ASSIGNED,
+        title: "New task assigned",
+        body: `${actorName} assigned you "${taskTitle}" in ${projectTitle}`,
+        actorUserId: actor?.uid,
+        actorName,
+        extra: { projectId, taskId },
+      });
+    } else if (!recipient) {
+      logger.warn("No user found for assigned task email.", { projectId, taskId, newAssignee });
+    }
+
+    await notifyAdmins({
+      excludeUids: [recipient?.uid, actor?.uid],
       type: NOTIFICATION_TYPES.TASK_ASSIGNED,
-      title: "New task assigned",
-      body: `${actorName} assigned you "${taskTitle}" in ${projectTitle}`,
+      title: "Task assignment",
+      body: `${actorName} assigned "${taskTitle}" to ${recipient?.name || newAssignee} in ${projectTitle}`,
       actorUserId: actor?.uid,
       actorName,
       extra: { projectId, taskId },
@@ -458,7 +512,7 @@ exports.onProjectSubtaskAssigneeChanged = onDocumentWritten(
     if (!newAssignee || newAssignee === oldAssignee) return;
 
     const assignedByEmail = (after.assignedByEmail || "").trim().toLowerCase();
-    if (assignedByEmail && assignedByEmail === newAssignee) return; // self-assign
+    const isSelfAssign = Boolean(assignedByEmail) && assignedByEmail === newAssignee;
 
     const { projectId, taskId, subtaskId } = event.params;
     const db = getFirestore();
@@ -469,22 +523,31 @@ exports.onProjectSubtaskAssigneeChanged = onDocumentWritten(
     ]);
 
     const recipient = usersByEmail.get(newAssignee);
-    if (!recipient) {
-      logger.warn("No user found for assigned subtask email.", { projectId, taskId, subtaskId, newAssignee });
-      return;
-    }
-
     const actor = assignedByEmail ? usersByEmail.get(assignedByEmail) : null;
     const actorName = actor?.name || "Someone";
     const projectTitle = projectSnap.exists ? projectSnap.data()?.projectTitle || "a project" : "a project";
     const parentTaskTitle = taskSnap.exists ? taskSnap.data()?.title || "a task" : "a task";
     const subtaskTitle = after.title || "a subtask";
 
-    await notifyUser({
-      recipientUserId: recipient.uid,
+    if (recipient && !isSelfAssign) {
+      await notifyUser({
+        recipientUserId: recipient.uid,
+        type: NOTIFICATION_TYPES.SUBTASK_ASSIGNED,
+        title: "New subtask assigned",
+        body: `${actorName} assigned you "${subtaskTitle}" (${parentTaskTitle}) in ${projectTitle}`,
+        actorUserId: actor?.uid,
+        actorName,
+        extra: { projectId, taskId, subtaskId },
+      });
+    } else if (!recipient) {
+      logger.warn("No user found for assigned subtask email.", { projectId, taskId, subtaskId, newAssignee });
+    }
+
+    await notifyAdmins({
+      excludeUids: [recipient?.uid, actor?.uid],
       type: NOTIFICATION_TYPES.SUBTASK_ASSIGNED,
-      title: "New subtask assigned",
-      body: `${actorName} assigned you "${subtaskTitle}" (${parentTaskTitle}) in ${projectTitle}`,
+      title: "Subtask assignment",
+      body: `${actorName} assigned "${subtaskTitle}" (${parentTaskTitle}) to ${recipient?.name || newAssignee} in ${projectTitle}`,
       actorUserId: actor?.uid,
       actorName,
       extra: { projectId, taskId, subtaskId },
@@ -538,6 +601,108 @@ exports.onProjectTeamMembersChanged = onDocumentWritten(
   }
 );
 
+// Notifies the rest of a project's team (teamMembers + lead, minus the sender)
+// whenever someone posts a new chat message.
+exports.onProjectChatMessageCreated = onDocumentCreated(
+  "projects/{projectId}/chatMessages/{messageId}",
+  async (event) => {
+    const message = event.data?.data();
+    if (!message) return;
+
+    const { projectId } = event.params;
+    const db = getFirestore();
+    const projectSnap = await db.collection("projects").doc(projectId).get();
+    const project = projectSnap.data();
+    if (!project) return;
+
+    const senderEmail = (message.senderEmail || "").trim().toLowerCase();
+    const recipientEmails = [...new Set(
+      [...(project.teamMembers || []), project.projectLead || ""]
+        .map((email) => (email || "").trim().toLowerCase())
+        .filter((email) => email && email !== senderEmail)
+    )];
+    if (recipientEmails.length === 0) return;
+
+    const projectTitle = project.projectTitle || "a project";
+    const usersByEmail = await lookupUsersByEmail([...recipientEmails, senderEmail]);
+    const sender = usersByEmail.get(senderEmail);
+    const senderName = sender?.name || "Someone";
+    const text = (message.text || "").trim();
+    const truncatedText = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+
+    await Promise.all(
+      recipientEmails.map((email) => {
+        const recipient = usersByEmail.get(email);
+        if (!recipient) return null;
+        return notifyUser({
+          recipientUserId: recipient.uid,
+          type: NOTIFICATION_TYPES.CHAT_MESSAGE,
+          title: `New message in ${projectTitle}`,
+          body: `${senderName}: ${truncatedText}`,
+          actorUserId: sender?.uid,
+          actorName: senderName,
+          extra: { projectId },
+        });
+      })
+    );
+  }
+);
+
+// Fires on every message in a report's chat thread (users/{reportOwnerId}/reports/{reportId}/chatMessages).
+// Recipients are everyone who has a stake in the thread so far — the report's owner plus
+// anyone who has previously sent a message in it — minus whoever just sent this one. That
+// covers both directions with one rule: the first message from someone other than the owner
+// notifies just the owner (nobody else has spoken yet), and when the owner replies it notifies
+// whoever opened the conversation.
+exports.onReportChatMessageCreated = onDocumentCreated(
+  "users/{reportOwnerId}/reports/{reportId}/chatMessages/{messageId}",
+  async (event) => {
+    const message = event.data?.data();
+    if (!message) return;
+
+    const senderId = typeof message.senderId === "string" ? message.senderId : "";
+    if (!senderId) return;
+    const senderName = message.senderName || "Someone";
+
+    const { reportOwnerId, reportId } = event.params;
+    const db = getFirestore();
+    const reportRef = db.collection("users").doc(reportOwnerId).collection("reports").doc(reportId);
+
+    // Running total so the reports list can show a message-count badge without each
+    // report needing its own live subcollection listener.
+    await reportRef.update({ messageCount: FieldValue.increment(1) }).catch((error) => {
+      logger.warn("Failed to increment report messageCount.", { reportOwnerId, reportId, error: String(error) });
+    });
+
+    const chatSnap = await reportRef.collection("chatMessages").get();
+    const participantIds = new Set();
+    chatSnap.docs.forEach((doc) => {
+      const id = doc.data()?.senderId;
+      if (typeof id === "string" && id) participantIds.add(id);
+    });
+    participantIds.add(reportOwnerId);
+    participantIds.delete(senderId);
+    if (participantIds.size === 0) return;
+
+    const text = (message.text || "").trim();
+    const truncatedText = text.length > 80 ? `${text.slice(0, 80)}…` : text;
+
+    await Promise.all(
+      [...participantIds].map((recipientUserId) =>
+        notifyUser({
+          recipientUserId,
+          type: NOTIFICATION_TYPES.REPORT_MESSAGE,
+          title: "New report message",
+          body: `${senderName}: ${truncatedText}`,
+          actorUserId: senderId,
+          actorName: senderName,
+          extra: { reportOwnerId, reportId },
+        })
+      )
+    );
+  }
+);
+
 // Fires when a task's status transitions to completed (whether via the plain
 // checkbox or via submitting a proof link). Notifies only the project lead,
 // and only about the fact that the task was completed — not the proof-link
@@ -560,25 +725,32 @@ exports.onProjectTaskCompleted = onDocumentWritten(
     const projectData = projectSnap.data() || {};
     const leadEmail = (projectData.projectLead || "").trim().toLowerCase();
     const completedByEmail = (after.completedByEmail || "").trim().toLowerCase();
-    if (!leadEmail || leadEmail === completedByEmail) return; // lead completed it themselves
 
     const usersByEmail = await lookupUsersByEmail([leadEmail, completedByEmail]);
-    const recipient = usersByEmail.get(leadEmail);
-    if (!recipient) {
-      logger.warn("No user found for project lead email.", { projectId, taskId, leadEmail });
-      return;
-    }
-
+    const recipient = leadEmail ? usersByEmail.get(leadEmail) : null;
     const actor = completedByEmail ? usersByEmail.get(completedByEmail) : null;
     const actorName = actor?.name || "Someone";
     const projectTitle = projectData.projectTitle || "a project";
     const taskTitle = after.title || "a task";
+    const body = `${actorName} completed "${taskTitle}" in ${projectTitle}`;
 
-    await notifyUser({
-      recipientUserId: recipient.uid,
+    if (recipient && leadEmail !== completedByEmail) {
+      await notifyUser({
+        recipientUserId: recipient.uid,
+        type: NOTIFICATION_TYPES.TASK_COMPLETED,
+        title: "Task completed",
+        body,
+        actorUserId: actor?.uid,
+        actorName,
+        extra: { projectId, taskId },
+      });
+    }
+
+    await notifyAdmins({
+      excludeUids: [recipient?.uid, actor?.uid],
       type: NOTIFICATION_TYPES.TASK_COMPLETED,
       title: "Task completed",
-      body: `${actorName} completed "${taskTitle}" in ${projectTitle}`,
+      body,
       actorUserId: actor?.uid,
       actorName,
       extra: { projectId, taskId },
@@ -608,26 +780,33 @@ exports.onProjectSubtaskCompleted = onDocumentWritten(
     const projectData = projectSnap.data() || {};
     const leadEmail = (projectData.projectLead || "").trim().toLowerCase();
     const completedByEmail = (after.completedByEmail || "").trim().toLowerCase();
-    if (!leadEmail || leadEmail === completedByEmail) return; // lead completed it themselves
 
     const usersByEmail = await lookupUsersByEmail([leadEmail, completedByEmail]);
-    const recipient = usersByEmail.get(leadEmail);
-    if (!recipient) {
-      logger.warn("No user found for project lead email.", { projectId, taskId, subtaskId, leadEmail });
-      return;
-    }
-
+    const recipient = leadEmail ? usersByEmail.get(leadEmail) : null;
     const actor = completedByEmail ? usersByEmail.get(completedByEmail) : null;
     const actorName = actor?.name || "Someone";
     const projectTitle = projectData.projectTitle || "a project";
     const parentTaskTitle = taskSnap.exists ? taskSnap.data()?.title || "a task" : "a task";
     const subtaskTitle = after.title || "a subtask";
+    const body = `${actorName} completed "${subtaskTitle}" (${parentTaskTitle}) in ${projectTitle}`;
 
-    await notifyUser({
-      recipientUserId: recipient.uid,
+    if (recipient && leadEmail !== completedByEmail) {
+      await notifyUser({
+        recipientUserId: recipient.uid,
+        type: NOTIFICATION_TYPES.SUBTASK_COMPLETED,
+        title: "Subtask completed",
+        body,
+        actorUserId: actor?.uid,
+        actorName,
+        extra: { projectId, taskId, subtaskId },
+      });
+    }
+
+    await notifyAdmins({
+      excludeUids: [recipient?.uid, actor?.uid],
       type: NOTIFICATION_TYPES.SUBTASK_COMPLETED,
       title: "Subtask completed",
-      body: `${actorName} completed "${subtaskTitle}" (${parentTaskTitle}) in ${projectTitle}`,
+      body,
       actorUserId: actor?.uid,
       actorName,
       extra: { projectId, taskId, subtaskId },

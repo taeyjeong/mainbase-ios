@@ -8,6 +8,7 @@ struct ContentView: View {
 
     @State private var selectedTab: AppTab = .clockIn
     @State private var didSetInitialTab = false
+    @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
 
     var body: some View {
         Group {
@@ -23,6 +24,10 @@ struct ContentView: View {
                     ProjectsListView()
                         .tabItem { Label("Projects", systemImage: "folder.fill") }
                         .tag(AppTab.projects)
+
+                    OperationsView()
+                        .tabItem { Label("Operations", systemImage: "shippingbox.fill") }
+                        .tag(AppTab.operations)
                 }
                 .onChange(of: trackerVM.isClockedIn) { _, isClockedIn in
                     guard !didSetInitialTab else { return }
@@ -36,6 +41,7 @@ struct ContentView: View {
                 .environmentObject(authVM)
             }
         }
+        .preferredColorScheme((AppearancePreference(rawValue: appearancePreference) ?? .system).colorScheme)
         .onChange(of: authVM.currentUserId) { _, userId in
             if let userId {
                 notificationVM.configure(userId: userId)

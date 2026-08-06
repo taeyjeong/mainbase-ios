@@ -12,6 +12,7 @@ struct TimeTrackerView: View {
     @State private var timerDisplay = "00:00:00"
     @State private var showingProfile = false
     @State private var showNotifications = false
+    @State private var showingSchedule = false
     @State private var showClockOutModal = false
     @State private var clockOutReport = ""
     @State private var showEmptyReportAlert = false
@@ -57,6 +58,9 @@ struct TimeTrackerView: View {
             NotificationsView()
                 .environmentObject(notificationVM)
         }
+        .sheet(isPresented: $showingSchedule) {
+            ScheduleView()
+        }
         .sheet(isPresented: $showClockOutModal) {
             ClockOutSheetView(
                 report: $clockOutReport,
@@ -90,20 +94,30 @@ struct TimeTrackerView: View {
 
             Spacer()
 
-            Button { showNotifications = true } label: {
-                Image(systemName: "bell")
-                    .font(.system(size: 20))
-                    .foregroundColor(AppColors.text)
-                    .overlay(alignment: .topTrailing) {
-                        if notificationVM.unreadCount > 0 {
-                            Circle()
-                                .fill(.red)
-                                .frame(width: 8, height: 8)
-                                .offset(x: 3, y: -3)
+            HStack(spacing: 16) {
+                Button { showingSchedule = true } label: {
+                    Image(systemName: "calendar")
+                        .font(.system(size: 20))
+                        .foregroundColor(AppColors.text)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Schedule")
+
+                Button { showNotifications = true } label: {
+                    Image(systemName: "bell")
+                        .font(.system(size: 20))
+                        .foregroundColor(AppColors.text)
+                        .overlay(alignment: .topTrailing) {
+                            if notificationVM.unreadCount > 0 {
+                                Circle()
+                                    .fill(.red)
+                                    .frame(width: 8, height: 8)
+                                    .offset(x: 3, y: -3)
+                            }
                         }
-                    }
+                }
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
         .padding(.top, 4)
     }

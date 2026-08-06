@@ -1,6 +1,17 @@
 import Combine
 import Foundation
+import FirebaseAuth
 import FirebaseFirestore
+
+struct ReportActionResult {
+    let success: Bool
+    let error: String?
+
+    static let ok = ReportActionResult(success: true, error: nil)
+    static func failure(_ message: String) -> ReportActionResult {
+        ReportActionResult(success: false, error: message)
+    }
+}
 
 @MainActor
 final class ReportsViewModel: ObservableObject {
@@ -8,12 +19,21 @@ final class ReportsViewModel: ObservableObject {
     @Published private(set) var isLoading = false
     @Published var selectedUserId: String?
     @Published var selectedMonth: Date = MonthGrouping.startOfMonth(for: Date())
+    @Published private(set) var currentReportChatMessages: [ReportChatMessage] = []
 
     private let db = Firestore.firestore()
     private var usersListener: ListenerRegistration?
     private var reportListeners: [String: ListenerRegistration] = [:]
     private var reportsByUser: [String: [Report]] = [:]
     private var userNames: [String: String] = [:]
+    private var reportChatListener: ListenerRegistration?
+
+    private var currentUserId: String? { Auth.auth().currentUser?.uid }
+
+    private var currentUserName: String {
+        guard let currentUserId else { return "Unknown" }
+        return userNames[currentUserId] ?? "Unknown"
+    }
 
     func startListening() {
         guard usersListener == nil else { return }
@@ -48,7 +68,8 @@ final class ReportsViewModel: ObservableObject {
                                 userId: userId,
                                 name: name,
                                 reportText: $0.reportText,
-                                timestamp: $0.timestamp
+                                timestamp: $0.timestamp,
+                                messageCount: $0.messageCount
                             )
                         }
                         self.rebuild()
@@ -72,12 +93,14 @@ final class ReportsViewModel: ObservableObject {
                     guard let ts = data["timestamp"] as? Timestamp else { return nil }
                     let reportText = data["reportText"] as? String ?? ""
                     guard !reportText.isEmpty else { return nil }
+                    let messageCount = data["messageCount"] as? Int ?? 0
                     return Report(
                         id: doc.documentID,
                         userId: userId,
                         name: name,
                         reportText: reportText,
-                        timestamp: ts.dateValue()
+                        timestamp: ts.dateValue(),
+                        messageCount: messageCount
                     )
                 }
                 self.reportsByUser[userId] = entries
@@ -145,5 +168,55 @@ final class ReportsViewModel: ObservableObject {
         userNames.removeAll()
         reports = []
         isLoading = false
+    }
+
+    // MARK: - Chat
+
+    /// A report's chatroom has no Firestore data of its own until the first message is sent —
+    /// opening the sheet just attaches a listener to a subcollection that may not exist yet.
+    func startReportChatListener(report: Report) {
+        stopReportChatListener()
+        reportChatListener = db.collection("users").document(report.userId)
+            .collection("reports").document(report.id)
+            .collection("chatMessages")
+            .order(by: "createdAt", descending: false)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                guard let self, let documents = snapshot?.documents else { return }
+                self.currentReportChatMessages = documents.map { doc in
+                    let data = doc.data()
+                    return ReportChatMessage(
+                        id: doc.documentID,
+                        text: data["text"] as? String ?? "",
+                        senderId: data["senderId"] as? String ?? "",
+                        senderName: data["senderName"] as? String ?? "Unknown",
+                        createdAt: (data["createdAt"] as? Timestamp)?.dateValue()
+                    )
+                }
+            }
+    }
+
+    func stopReportChatListener() {
+        reportChatListener?.remove()
+        reportChatListener = nil
+        currentReportChatMessages = []
+    }
+
+    func sendReportChatMessage(_ text: String, on report: Report) async -> ReportActionResult {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return .failure("Message can't be empty.") }
+        guard let currentUserId else { return .failure("You need to be signed in to chat.") }
+        do {
+            try await db.collection("users").document(report.userId)
+                .collection("reports").document(report.id)
+                .collection("chatMessages").addDocument(data: [
+                    "text": trimmed,
+                    "senderId": currentUserId,
+                    "senderName": currentUserName,
+                    "createdAt": FieldValue.serverTimestamp(),
+                ])
+            return .ok
+        } catch {
+            return .failure("Could not send message right now.")
+        }
     }
 }

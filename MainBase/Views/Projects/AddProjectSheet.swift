@@ -6,8 +6,11 @@ struct AddProjectSheet: View {
 
     @State private var title = ""
     @State private var description = ""
-    @State private var isSocials = false
+    @State private var selectedMainId = ""
+    @State private var selectedLabel: ProjectLabel = .marketing
+    @State private var selectedSublabels: Set<String> = []
     @State private var teamMembers: Set<String> = []
+    @State private var budgetText = ""
     @State private var isSaving = false
     @State private var errorMessage: String?
 
@@ -26,11 +29,14 @@ struct AddProjectSheet: View {
                             .inputFieldStyle()
                     }
 
-                    CheckboxToggle(isOn: $isSocials) {
-                        Text("Use socials task blueprint")
-                            .font(.system(size: 15))
-                            .foregroundColor(AppColors.text)
-                    }
+                    ProjectCategoryPicker(
+                        projectMains: vm.projectMains,
+                        selectedMainId: $selectedMainId,
+                        selectedLabel: $selectedLabel,
+                        selectedSublabels: $selectedSublabels
+                    )
+
+                    FormTextField(label: "Budget", placeholder: "e.g. 5000", text: $budgetText, keyboardType: .decimalPad)
 
                     TeamMemberPicker(selectedEmails: $teamMembers, users: vm.assignableTeamMembers, excluding: vm.currentUserEmail)
 
@@ -57,6 +63,11 @@ struct AddProjectSheet: View {
                     }
                 }
             }
+            .onAppear {
+                if selectedMainId.isEmpty {
+                    selectedMainId = vm.projectMains.first?.id ?? ""
+                }
+            }
         }
     }
 
@@ -66,8 +77,11 @@ struct AddProjectSheet: View {
         let result = await vm.submitProject(
             title: title,
             description: description,
-            label: isSocials ? .socials : .standard,
-            teamMembers: Array(teamMembers)
+            projectMainId: selectedMainId,
+            label: selectedLabel,
+            sublabels: Array(selectedSublabels),
+            teamMembers: Array(teamMembers),
+            budget: Double(budgetText)
         )
         isSaving = false
         if result.success {

@@ -47,7 +47,7 @@ struct SignUpView: View {
                     .multilineTextAlignment(.center)
                     .padding(.bottom, 24)
 
-                FormTextField(label: "Full Name", placeholder: "John Doe", text: $fullName)
+                FormTextField(label: "Name", placeholder: "John", text: $fullName)
                     .padding(.bottom, 16)
 
                 FormTextField(

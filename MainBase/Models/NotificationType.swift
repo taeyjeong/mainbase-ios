@@ -8,6 +8,8 @@ enum NotificationType: String {
     case addedToProject = "added_to_project"
     case taskCompleted = "task_completed"
     case subtaskCompleted = "subtask_completed"
+    case chatMessage = "chat_message"
+    case reportMessage = "report_message"
 }
 
 /// Mirrors the CLOCK_ACTIONS map in functions/index.js. Keep both in sync.

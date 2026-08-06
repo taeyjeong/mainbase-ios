@@ -9,6 +9,8 @@ struct ProfileSheetView: View {
 
     @State private var showSignOutConfirm = false
     @State private var selectedHistoryUserId: String?
+    @State private var isEditingEmoji = false
+    @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
 
     var body: some View {
         NavigationStack {
@@ -21,8 +23,11 @@ struct ProfileSheetView: View {
                         VStack(spacing: 24) {
                             avatarSection
                             infoCard
+                            appearanceSection
                             if vm.profile.admin {
+                                clockNotificationSection
                                 adminSection
+                                ManageProjectMainsView()
                             }
                             historySection
                             saveButton
@@ -81,18 +86,39 @@ struct ProfileSheetView: View {
 
     private var avatarSection: some View {
         VStack(spacing: 12) {
-            Circle()
-                .fill(AppColors.cardBackground)
-                .frame(width: 80, height: 80)
-                .overlay(Circle().stroke(AppColors.primary, lineWidth: 2))
-                .overlay(
-                    Image(systemName: "person.fill")
-                        .font(.system(size: 36))
+            Button {
+                isEditingEmoji = true
+            } label: {
+                ZStack(alignment: .bottomTrailing) {
+                    Circle()
+                        .fill(AppColors.cardBackground)
+                        .frame(width: 80, height: 80)
+                        .overlay(Circle().stroke(AppColors.primary, lineWidth: 2))
+                        .overlay(
+                            Group {
+                                if vm.profile.emoji.isEmpty {
+                                    Image(systemName: "person.fill")
+                                        .font(.system(size: 36))
+                                        .foregroundColor(AppColors.primary)
+                                } else {
+                                    Text(vm.profile.emoji)
+                                        .font(.system(size: 40))
+                                }
+                            }
+                        )
+                    Image(systemName: "pencil.circle.fill")
+                        .font(.system(size: 20))
                         .foregroundColor(AppColors.primary)
-                )
+                        .background(Circle().fill(AppColors.cardBackground))
+                }
+            }
+            .buttonStyle(.plain)
 
-            if !vm.profile.name.isEmpty {
-                Text(vm.profile.name)
+            let fullName = [vm.profile.name, vm.profile.surname]
+                .filter { !$0.isEmpty }
+                .joined(separator: " ")
+            if !fullName.isEmpty {
+                Text(fullName)
                     .font(.system(size: 20, weight: .semibold))
                     .foregroundColor(AppColors.text)
             }
@@ -100,6 +126,16 @@ struct ProfileSheetView: View {
             Text(vm.profile.email)
                 .font(.system(size: 14))
                 .foregroundColor(AppColors.textSecondary)
+        }
+        .alert("Choose an emoji", isPresented: $isEditingEmoji) {
+            TextField("Emoji", text: $vm.profile.emoji)
+                .onChange(of: vm.profile.emoji) { _, newValue in
+                    vm.profile.emoji = String(newValue.suffix(1))
+                }
+            Button("Done") {}
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Tap the field and switch to your emoji keyboard.")
         }
     }
 
@@ -110,10 +146,23 @@ struct ProfileSheetView: View {
                 .foregroundColor(AppColors.text)
                 .padding(.bottom, 16)
 
-            fieldRow(label: "Full Name") {
-                TextField("Enter your name", text: $vm.profile.name)
-                    .inputFieldStyle()
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Name")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AppColors.text)
+                    TextField("Enter your name", text: $vm.profile.name)
+                        .inputFieldStyle()
+                }
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Surname")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AppColors.text)
+                    TextField("Enter your surname", text: $vm.profile.surname)
+                        .inputFieldStyle()
+                }
             }
+            .padding(.bottom, 16)
 
             fieldRow(label: "Email") {
                 Text(vm.profile.email.isEmpty ? "—" : vm.profile.email)
@@ -137,23 +186,12 @@ struct ProfileSheetView: View {
                     .inputFieldStyle()
             }
 
-            HStack(spacing: 12) {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Phone")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(AppColors.text)
-                    TextField("Phone number", text: $vm.profile.phone)
-                        .inputFieldStyle()
-                        .keyboardType(.phonePad)
-                }
+            fieldRow(label: "Phone") {
+                PhoneNumberField(fullPhone: $vm.profile.phone)
+            }
 
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Country")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(AppColors.text)
-                    TextField("Country", text: $vm.profile.country)
-                        .inputFieldStyle()
-                }
+            fieldRow(label: "Country") {
+                CountryDropdown(selectedCountry: $vm.profile.country, placeholder: "Select country")
             }
         }
         .padding(16)
@@ -173,6 +211,52 @@ struct ProfileSheetView: View {
             content()
         }
         .padding(.bottom, 16)
+    }
+
+    private var appearanceSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Appearance")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AppColors.text)
+
+            Picker("Appearance", selection: $appearancePreference) {
+                Text("System").tag(AppearancePreference.system.rawValue)
+                Text("Light").tag(AppearancePreference.light.rawValue)
+                Text("Dark").tag(AppearancePreference.dark.rawValue)
+            }
+            .pickerStyle(.segmented)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(AppColors.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+        )
+    }
+
+    private var clockNotificationSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Clock Notifications")
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AppColors.text)
+
+            Picker("Clock Notifications", selection: $vm.profile.clockNotificationPreference) {
+                ForEach(ClockNotificationPreference.allCases, id: \.self) { preference in
+                    Text(preference.displayName).tag(preference)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text("As an admin, choose whether you hear about every coworker clock-in/out, or none at all — regardless of your own clock status.")
+                .font(.system(size: 12))
+                .foregroundColor(AppColors.textSecondary)
+        }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(AppColors.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+        )
     }
 
     private var adminSection: some View {

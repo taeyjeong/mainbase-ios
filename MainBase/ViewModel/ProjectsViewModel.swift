@@ -2,39 +2,17 @@ import Combine
 import Foundation
 import FirebaseAuth
 import FirebaseFirestore
+import FirebaseStorage
+import UIKit
 
-private struct TaskBlueprint {
-    let title: String
-    let description: String
-    let subtasks: [String]
-}
-
-private let defaultTaskBlueprint: [TaskBlueprint] = [
-    TaskBlueprint(
-        title: "Generate a blog post about traveling around your city and share Google Doc link",
-        description: "Shareable Google Doc link is required to complete this task.",
-        subtasks: ["Waiting on Ibrahim to publish on website"]
-    ),
-    TaskBlueprint(
-        title: "Use Tourbook app to create an itinerary and share link",
-        description: "Create itinerary and attach the link.",
-        subtasks: []
-    ),
-    TaskBlueprint(
-        title: "Gather reels/photos for content and share Google Drive link",
-        description: "Upload media to Drive and share the URL.",
-        subtasks: ["Create a reel with CapCut, Adobe Premiere, or Instagram Edit", "Choose 10 photos for a carousel"]
-    ),
-    TaskBlueprint(
-        title: "Post reel/carousel/shortened blog post to Facebook group and share post link",
-        description: "Include caption and hashtags.",
-        subtasks: ["Waiting on Cynthia to publish on TikTok"]
-    ),
-    TaskBlueprint(
-        title: "Receive instruction for keyword research, blog optimization, GA4, and Meta Business Suite",
-        description: "Track process updates and complete once instruction is done.",
-        subtasks: []
-    ),
+/// Deterministic seed IDs/colors for the built-in Mains, so seeding is idempotent
+/// (re-running never clobbers an admin's edits to name/color) and multiple clients
+/// racing to seed on first launch just write the same content.
+private let defaultProjectMains: [ProjectMain] = [
+    ProjectMain(id: "la-coach-tours", name: "LA Coach Tours", colorHex: "#FF3B30"),
+    ProjectMain(id: "us-group-travel", name: "US Group Travel", colorHex: "#34C759"),
+    ProjectMain(id: "tourbook-app", name: "TourBook app", colorHex: "#0A84FF"),
+    ProjectMain(id: "cinq-app", name: "Cinq app", colorHex: "#AF52DE"),
 ]
 
 struct ProjectActionResult {
@@ -47,6 +25,33 @@ struct ProjectActionResult {
     }
 }
 
+struct TaskSubmissionResult {
+    let success: Bool
+    let error: String?
+    let taskId: String?
+
+    static func ok(_ taskId: String) -> TaskSubmissionResult {
+        TaskSubmissionResult(success: true, error: nil, taskId: taskId)
+    }
+    static func failure(_ message: String) -> TaskSubmissionResult {
+        TaskSubmissionResult(success: false, error: message, taskId: nil)
+    }
+}
+
+/// A task (with optional subtasks) not yet saved, composed in the multi-task add sheet.
+struct DraftTask: Identifiable {
+    let id = UUID()
+    var title: String = ""
+    var assigneeEmail: String = ""
+    var subtasks: [DraftSubtask] = []
+}
+
+struct DraftSubtask: Identifiable {
+    let id = UUID()
+    var title: String = ""
+    var assigneeEmail: String = ""
+}
+
 @MainActor
 final class ProjectsViewModel: ObservableObject {
     @Published private(set) var projects: [Project] = []
@@ -54,12 +59,59 @@ final class ProjectsViewModel: ObservableObject {
     @Published private(set) var assignableUserEmails: [String] = []
     @Published private(set) var assignableTeamMembers: [AssignableUser] = []
     @Published private(set) var userNamesByEmail: [String: String] = [:]
+    @Published private(set) var userFirstNamesByEmail: [String: String] = [:]
+    @Published private(set) var userEmojisByEmail: [String: String] = [:]
     @Published private(set) var currentUserEmail: String = ""
     @Published private(set) var currentUserIsAdmin: Bool = false
     @Published private(set) var archivedProjects: [Project] = []
     @Published private(set) var isLoadingArchivedProjects = false
+    @Published private(set) var projectMains: [ProjectMain] = []
+    @Published private(set) var currentChatMessages: [ProjectChatMessage] = []
+    @Published private(set) var currentExpenses: [ProjectExpense] = []
 
     private let db = Firestore.firestore()
+    private let storage = Storage.storage()
+    private var projectMainsListener: ListenerRegistration?
+    private var chatListener: ListenerRegistration?
+    private var expensesListener: ListenerRegistration?
+    private var hasAttemptedMainsSeed = false
+
+    func projectMain(withId id: String?) -> ProjectMain? {
+        guard let id else { return nil }
+        return projectMains.first { $0.id == id }
+    }
+
+    func startProjectMainsListener() {
+        guard projectMainsListener == nil else { return }
+        projectMainsListener = db.collection("projectMains").addSnapshotListener { [weak self] snapshot, _ in
+            guard let self, let documents = snapshot?.documents else { return }
+            self.projectMains = documents.map { doc in
+                let data = doc.data()
+                return ProjectMain(
+                    id: doc.documentID,
+                    name: data["name"] as? String ?? "",
+                    colorHex: data["colorHex"] as? String ?? "#999999"
+                )
+            }
+            if documents.isEmpty, !self.hasAttemptedMainsSeed {
+                self.hasAttemptedMainsSeed = true
+                Task { await self.seedDefaultProjectMainsIfNeeded() }
+            }
+        }
+    }
+
+    private func seedDefaultProjectMainsIfNeeded() async {
+        let batch = db.batch()
+        for main in defaultProjectMains {
+            let ref = db.collection("projectMains").document(main.id)
+            batch.setData([
+                "name": main.name,
+                "colorHex": main.colorHex,
+                "createdAt": FieldValue.serverTimestamp(),
+            ], forDocument: ref, merge: true)
+        }
+        try? await batch.commit()
+    }
 
     private func loadCurrentUserInfo() async -> (email: String, isAdmin: Bool) {
         guard let uid = Auth.auth().currentUser?.uid else { return ("", false) }
@@ -96,6 +148,7 @@ final class ProjectsViewModel: ObservableObject {
     // MARK: - Fetch
 
     func loadProjects() async {
+        startProjectMainsListener()
         isLoadingProjects = true
         defer { isLoadingProjects = false }
         async let fetchedProjects = fetchProjects()
@@ -106,6 +159,8 @@ final class ProjectsViewModel: ObservableObject {
         currentUserEmail = userInfo.email
         currentUserIsAdmin = userInfo.isAdmin
         userNamesByEmail = Dictionary(uniqueKeysWithValues: loadedUsers.map { ($0.email.lowercased(), $0.name) })
+        userFirstNamesByEmail = Dictionary(uniqueKeysWithValues: loadedUsers.map { ($0.email.lowercased(), $0.firstName) })
+        userEmojisByEmail = Dictionary(uniqueKeysWithValues: loadedUsers.map { ($0.email.lowercased(), $0.emoji) })
         assignableTeamMembers = loadedUsers
             .filter { $0.isEmployed }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -120,6 +175,15 @@ final class ProjectsViewModel: ObservableObject {
 
     func displayName(forEmail email: String) -> String {
         userNamesByEmail[email.trimmingCharacters(in: .whitespaces).lowercased()] ?? email
+    }
+
+    /// First name plus the person's chosen profile emoji (e.g. "Sarah 🌵"), used where a compact,
+    /// scannable roster of people is shown, like the team-members line on a project card.
+    func teamMemberTag(forEmail email: String) -> String {
+        let key = email.trimmingCharacters(in: .whitespaces).lowercased()
+        let firstName = userFirstNamesByEmail[key] ?? email
+        guard let emoji = userEmojisByEmail[key], !emoji.isEmpty else { return firstName }
+        return "\(firstName) \(emoji)"
     }
 
     func loadArchivedProjects() async {
@@ -186,7 +250,11 @@ final class ProjectsViewModel: ObservableObject {
             projectDescription: projectData["projectDescription"] as? String ?? "",
             projectLead: projectData["projectLead"] as? String ?? "",
             teamMembers: projectData["teamMembers"] as? [String] ?? [],
-            label: (projectData["label"] as? String) == ProjectLabel.socials.rawValue ? .socials : .standard,
+            projectMainId: projectData["projectMainId"] as? String,
+            label: (projectData["label"] as? String).flatMap(ProjectLabel.init(rawValue:)),
+            sublabels: projectData["sublabels"] as? [String] ?? [],
+            photoURLs: projectData["photoURLs"] as? [String] ?? [],
+            budget: projectData["budget"] as? Double,
             status: allTasksCompleted ? .completed : .inProgress,
             isArchived: projectData["isArchived"] as? Bool ?? false,
             createdAt: normalizeTimestamp(projectData["createdAt"]),
@@ -242,8 +310,12 @@ final class ProjectsViewModel: ObservableObject {
                 let email = (data["email"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
                 guard !email.isEmpty, seenEmails.insert(email.lowercased()).inserted else { continue }
                 let name = (data["name"] as? String)?.trimmingCharacters(in: .whitespaces) ?? ""
+                let surname = (data["surname"] as? String) ?? ""
+                let emoji = (data["emoji"] as? String) ?? ""
                 let isEmployed = data["isEmployed"] as? Bool ?? false
-                users.append(AssignableUser(email: email, name: name.isEmpty ? email : name, isEmployed: isEmployed))
+                let displayName = name.isEmpty ? email : formattedDisplayName(name: name, surname: surname)
+                let firstName = name.isEmpty ? email : name
+                users.append(AssignableUser(email: email, name: displayName, firstName: firstName, emoji: emoji, isEmployed: isEmployed))
             }
             return users
         } catch {
@@ -260,57 +332,79 @@ final class ProjectsViewModel: ObservableObject {
         }
     }
 
+    private func getTaskTitle(projectId: String, taskId: String) async -> String {
+        do {
+            let snapshot = try await db.collection("projects").document(projectId).collection("tasks").document(taskId).getDocument()
+            return (snapshot.data()?["title"] as? String) ?? "a task"
+        } catch {
+            return "a task"
+        }
+    }
+
+    // MARK: - Activity log
+
+    /// Posts an italicized, timestamped entry into the project's chat feed describing an
+    /// action someone just took (task/subtask added or completed, photo added, message pinned).
+    private func logActivity(projectId: String, text: String) async {
+        try? await db.collection("projects").document(projectId).collection("chatMessages").addDocument(data: [
+            "text": text,
+            "senderEmail": currentUserEmail,
+            "isPinned": false,
+            "isSystemEvent": true,
+            "createdAt": FieldValue.serverTimestamp(),
+        ])
+    }
+
+    private func actorName() -> String {
+        displayName(forEmail: currentUserEmail)
+    }
+
+    /// Formats upload indices as "#3", "#3 & #4", or "#3, #4 & #5".
+    private func photoNumberList(startingAt start: Int, count: Int) -> String {
+        let numbers = (0..<count).map { "#\(start + $0 + 1)" }
+        guard numbers.count > 1 else { return numbers.first ?? "" }
+        return "\(numbers.dropLast().joined(separator: ", ")) & \(numbers.last!)"
+    }
+
     // MARK: - Mutations
 
     private func cleanedEmailList(_ emails: [String]) -> [String] {
         Array(Set(emails.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty })).sorted()
     }
 
-    func submitProject(title: String, description: String, label: ProjectLabel, teamMembers: [String]) async -> ProjectActionResult {
+    func submitProject(
+        title: String,
+        description: String,
+        projectMainId: String,
+        label: ProjectLabel,
+        sublabels: [String],
+        teamMembers: [String],
+        budget: Double?
+    ) async -> ProjectActionResult {
         let projectTitle = title.trimmingCharacters(in: .whitespaces)
         let projectDescription = description.trimmingCharacters(in: .whitespaces)
         let projectLead = currentUserEmail.trimmingCharacters(in: .whitespaces)
         guard !projectTitle.isEmpty else { return .failure("Project title is required.") }
         guard !projectLead.isEmpty else { return .failure("Missing project lead email. Please sign in again.") }
+        guard !projectMainId.isEmpty else { return .failure("Please select a Main.") }
+        guard !sublabels.isEmpty else { return .failure("Please select at least one sublabel.") }
 
         do {
-            let projectRef = try await db.collection("projects").addDocument(data: [
+            _ = try await db.collection("projects").addDocument(data: [
                 "projectTitle": projectTitle,
                 "projectDescription": projectDescription,
                 "projectLead": projectLead,
                 "teamMembers": cleanedEmailList(teamMembers),
+                "projectMainId": projectMainId,
                 "label": label.rawValue,
+                "sublabels": sublabels,
+                "photoURLs": [String](),
+                "budget": budget.map { $0 as Any } ?? NSNull(),
                 "status": ProjectStatus.inProgress.rawValue,
                 "isArchived": false,
                 "createdAt": FieldValue.serverTimestamp(),
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
-
-            if label == .socials {
-                for (index, blueprint) in defaultTaskBlueprint.enumerated() {
-                    let taskRef = try await projectRef.collection("tasks").addDocument(data: [
-                        "title": blueprint.title,
-                        "description": blueprint.description,
-                        "status": ProjectStatus.inProgress.rawValue,
-                        "assigneeEmail": projectLead,
-                        "completedAt": NSNull(),
-                        "order": index,
-                        "createdAt": FieldValue.serverTimestamp(),
-                        "updatedAt": FieldValue.serverTimestamp(),
-                    ])
-                    for (subIndex, subtaskTitle) in blueprint.subtasks.enumerated() {
-                        try await taskRef.collection("subtasks").addDocument(data: [
-                            "title": subtaskTitle,
-                            "status": ProjectStatus.inProgress.rawValue,
-                            "assigneeEmail": "",
-                            "completedAt": NSNull(),
-                            "order": subIndex,
-                            "createdAt": FieldValue.serverTimestamp(),
-                            "updatedAt": FieldValue.serverTimestamp(),
-                        ])
-                    }
-                }
-            }
             await loadProjects()
             return .ok
         } catch {
@@ -318,7 +412,8 @@ final class ProjectsViewModel: ObservableObject {
         }
     }
 
-    func submitAddTask(projectId: String, title: String, assigneeEmail: String) async -> ProjectActionResult {
+    @discardableResult
+    func submitAddTask(projectId: String, title: String, assigneeEmail: String) async -> TaskSubmissionResult {
         let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return .failure("Task title is required.") }
         do {
@@ -326,7 +421,7 @@ final class ProjectsViewModel: ObservableObject {
             let trimmedAssignee = assigneeEmail.trimmingCharacters(in: .whitespaces)
             let resolvedAssignee = trimmedAssignee.isEmpty ? projectLead : trimmedAssignee
             let existingTasks = try await db.collection("projects").document(projectId).collection("tasks").getDocuments()
-            try await db.collection("projects").document(projectId).collection("tasks").addDocument(data: [
+            let taskRef = try await db.collection("projects").document(projectId).collection("tasks").addDocument(data: [
                 "title": trimmedTitle,
                 "description": "",
                 "status": ProjectStatus.inProgress.rawValue,
@@ -337,11 +432,25 @@ final class ProjectsViewModel: ObservableObject {
                 "createdAt": FieldValue.serverTimestamp(),
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
+            await logActivity(projectId: projectId, text: "\(actorName()) added a task '\(trimmedTitle)'")
             await loadProjects()
-            return .ok
+            return .ok(taskRef.documentID)
         } catch {
             return .failure("Could not add task right now.")
         }
+    }
+
+    /// Creates a task and any subtasks composed alongside it in the multi-task add sheet.
+    func submitAddTaskWithSubtasks(projectId: String, title: String, assigneeEmail: String, subtasks: [DraftSubtask]) async -> ProjectActionResult {
+        let taskResult = await submitAddTask(projectId: projectId, title: title, assigneeEmail: assigneeEmail)
+        guard taskResult.success, let taskId = taskResult.taskId else {
+            return .failure(taskResult.error ?? "Could not add task right now.")
+        }
+        for subtask in subtasks where !subtask.title.trimmingCharacters(in: .whitespaces).isEmpty {
+            let result = await submitAddSubtask(projectId: projectId, taskId: taskId, title: subtask.title, assigneeEmail: subtask.assigneeEmail)
+            if !result.success { return result }
+        }
+        return .ok
     }
 
     func submitAddSubtask(projectId: String, taskId: String, title: String, assigneeEmail: String) async -> ProjectActionResult {
@@ -350,16 +459,23 @@ final class ProjectsViewModel: ObservableObject {
         do {
             let taskRef = db.collection("projects").document(projectId).collection("tasks").document(taskId)
             let existingSubtasks = try await taskRef.collection("subtasks").getDocuments()
+            let trimmedAssignee = assigneeEmail.trimmingCharacters(in: .whitespaces)
             try await taskRef.collection("subtasks").addDocument(data: [
                 "title": trimmedTitle,
                 "status": ProjectStatus.inProgress.rawValue,
-                "assigneeEmail": assigneeEmail.trimmingCharacters(in: .whitespaces),
+                "assigneeEmail": trimmedAssignee,
                 "assignedByEmail": currentUserEmail,
                 "completedAt": NSNull(),
                 "order": existingSubtasks.count,
                 "createdAt": FieldValue.serverTimestamp(),
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
+            let taskTitle = await getTaskTitle(projectId: projectId, taskId: taskId)
+            var activityText = "\(actorName()) added a subtask '\(trimmedTitle)' to task '\(taskTitle)'"
+            if !trimmedAssignee.isEmpty {
+                activityText += " & assigned \(displayName(forEmail: trimmedAssignee))"
+            }
+            await logActivity(projectId: projectId, text: activityText)
             await loadProjects()
             return .ok
         } catch {
@@ -390,6 +506,9 @@ final class ProjectsViewModel: ObservableObject {
                     "completedByEmail": currentUserEmail,
                     "updatedAt": FieldValue.serverTimestamp(),
                 ])
+            if isCompleted {
+                await logActivity(projectId: projectId, text: "\(actorName()) completed subtask '\(subtask.title)'")
+            }
             await loadProjects()
             return .ok
         } catch {
@@ -409,6 +528,9 @@ final class ProjectsViewModel: ObservableObject {
                 "completedByEmail": currentUserEmail,
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
+            if isCompleted {
+                await logActivity(projectId: projectId, text: "\(actorName()) completed task '\(task.title)'")
+            }
             await loadProjects()
             return .ok
         } catch {
@@ -452,7 +574,17 @@ final class ProjectsViewModel: ObservableObject {
         }
     }
 
-    func submitEditProject(projectId: String, title: String, description: String, projectLead: String, teamMembers: [String]) async -> ProjectActionResult {
+    func submitEditProject(
+        projectId: String,
+        title: String,
+        description: String,
+        projectLead: String,
+        teamMembers: [String],
+        projectMainId: String,
+        label: ProjectLabel,
+        sublabels: [String],
+        budget: Double?
+    ) async -> ProjectActionResult {
         guard let existing = projects.first(where: { $0.id == projectId }) else {
             return .failure("Project not found.")
         }
@@ -464,6 +596,8 @@ final class ProjectsViewModel: ObservableObject {
         let trimmedLead = projectLead.trimmingCharacters(in: .whitespaces)
         guard !trimmedTitle.isEmpty else { return .failure("Project title is required.") }
         guard !trimmedLead.isEmpty else { return .failure("Project lead is required.") }
+        guard !projectMainId.isEmpty else { return .failure("Please select a Main.") }
+        guard !sublabels.isEmpty else { return .failure("Please select at least one sublabel.") }
 
         do {
             try await db.collection("projects").document(projectId).updateData([
@@ -471,6 +605,10 @@ final class ProjectsViewModel: ObservableObject {
                 "projectDescription": trimmedDescription,
                 "projectLead": trimmedLead,
                 "teamMembers": cleanedEmailList(teamMembers),
+                "projectMainId": projectMainId,
+                "label": label.rawValue,
+                "sublabels": sublabels,
+                "budget": budget.map { $0 as Any } ?? NSNull(),
                 "lastEditedByEmail": currentUserEmail,
                 "updatedAt": FieldValue.serverTimestamp(),
             ])
@@ -478,6 +616,171 @@ final class ProjectsViewModel: ObservableObject {
             return .ok
         } catch {
             return .failure("Could not update project right now.")
+        }
+    }
+
+    // MARK: - Photos
+
+    func addPhotos(projectId: String, images: [UIImage]) async -> ProjectActionResult {
+        do {
+            let existingPhotoCount = projects.first(where: { $0.id == projectId })?.photoURLs.count ?? 0
+            var uploadedURLs: [String] = []
+            for image in images {
+                guard let data = image.jpegData(compressionQuality: 0.8) else { continue }
+                let ref = storage.reference().child("projects/\(projectId)/photos/\(UUID().uuidString).jpg")
+                _ = try await ref.putDataAsync(data, metadata: nil)
+                let url = try await ref.downloadURL()
+                uploadedURLs.append(url.absoluteString)
+            }
+            guard !uploadedURLs.isEmpty else { return .failure("Could not upload photos.") }
+            try await db.collection("projects").document(projectId).updateData([
+                "photoURLs": FieldValue.arrayUnion(uploadedURLs),
+                "updatedAt": FieldValue.serverTimestamp(),
+            ])
+            let numberList = photoNumberList(startingAt: existingPhotoCount, count: uploadedURLs.count)
+            let noun = uploadedURLs.count == 1 ? "photo" : "photos"
+            await logActivity(projectId: projectId, text: "\(actorName()) added \(noun) \(numberList)")
+            await loadProjects()
+            return .ok
+        } catch {
+            return .failure("Could not upload photos right now.")
+        }
+    }
+
+    // MARK: - Budget & Expenses
+
+    func startExpensesListener(projectId: String) {
+        stopExpensesListener()
+        expensesListener = db.collection("projects").document(projectId)
+            .collection("expenses")
+            .order(by: "createdAt", descending: true)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                guard let self, let documents = snapshot?.documents else { return }
+                self.currentExpenses = documents.map { doc in
+                    let data = doc.data()
+                    return ProjectExpense(
+                        id: doc.documentID,
+                        name: data["expenseName"] as? String ?? "",
+                        type: data["expenseType"] as? String ?? "",
+                        amount: data["expenseAmt"] as? Double ?? 0,
+                        createdByEmail: data["createdByEmail"] as? String ?? "",
+                        createdAt: self.normalizeTimestamp(data["createdAt"])
+                    )
+                }
+            }
+    }
+
+    func stopExpensesListener() {
+        expensesListener?.remove()
+        expensesListener = nil
+        currentExpenses = []
+    }
+
+    func addExpense(projectId: String, name: String, type: String, amount: Double) async -> ProjectActionResult {
+        let trimmedName = name.trimmingCharacters(in: .whitespaces)
+        let trimmedType = type.trimmingCharacters(in: .whitespaces)
+        guard !trimmedName.isEmpty else { return .failure("Expense name is required.") }
+        guard amount > 0 else { return .failure("Enter an amount greater than 0.") }
+        do {
+            try await db.collection("projects").document(projectId).collection("expenses").addDocument(data: [
+                "expenseName": trimmedName,
+                "expenseType": trimmedType,
+                "expenseAmt": amount,
+                "createdByEmail": currentUserEmail,
+                "createdAt": FieldValue.serverTimestamp(),
+            ])
+            return .ok
+        } catch {
+            return .failure("Could not add expense right now.")
+        }
+    }
+
+    func deleteExpense(projectId: String, expenseId: String) async -> ProjectActionResult {
+        do {
+            try await db.collection("projects").document(projectId).collection("expenses").document(expenseId).delete()
+            return .ok
+        } catch {
+            return .failure("Could not delete expense right now.")
+        }
+    }
+
+    // MARK: - Chat
+
+    func canChat(projectId: String) -> Bool {
+        if currentUserIsAdmin { return true }
+        guard let project = projects.first(where: { $0.id == projectId }) else { return false }
+        if project.projectLead.caseInsensitiveCompare(currentUserEmail) == .orderedSame { return true }
+        return project.teamMembers.contains { $0.caseInsensitiveCompare(currentUserEmail) == .orderedSame }
+    }
+
+    func startChatListener(projectId: String) {
+        stopChatListener()
+        chatListener = db.collection("projects").document(projectId)
+            .collection("chatMessages")
+            .order(by: "createdAt", descending: false)
+            .addSnapshotListener { [weak self] snapshot, _ in
+                guard let self, let documents = snapshot?.documents else { return }
+                self.currentChatMessages = documents.map { doc in
+                    let data = doc.data()
+                    return ProjectChatMessage(
+                        id: doc.documentID,
+                        text: data["text"] as? String ?? "",
+                        senderEmail: data["senderEmail"] as? String ?? "",
+                        createdAt: self.normalizeTimestamp(data["createdAt"]),
+                        isPinned: data["isPinned"] as? Bool ?? false,
+                        isSystemEvent: data["isSystemEvent"] as? Bool ?? false
+                    )
+                }
+            }
+    }
+
+    func stopChatListener() {
+        chatListener?.remove()
+        chatListener = nil
+        currentChatMessages = []
+    }
+
+    func sendChatMessage(projectId: String, text: String) async -> ProjectActionResult {
+        let trimmedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedText.isEmpty else { return .failure("Message can't be empty.") }
+        guard canChat(projectId: projectId) else {
+            return .failure("Only project team members can post in this chat.")
+        }
+        do {
+            try await db.collection("projects").document(projectId).collection("chatMessages").addDocument(data: [
+                "text": trimmedText,
+                "senderEmail": currentUserEmail,
+                "isPinned": false,
+                "isSystemEvent": false,
+                "createdAt": FieldValue.serverTimestamp(),
+            ])
+            return .ok
+        } catch {
+            return .failure("Could not send message right now.")
+        }
+    }
+
+    func togglePinMessage(projectId: String, message: ProjectChatMessage) async -> ProjectActionResult {
+        guard canChat(projectId: projectId) else {
+            return .failure("Only project team members can pin messages.")
+        }
+        if !message.isPinned {
+            let pinnedCount = currentChatMessages.filter { $0.isPinned }.count
+            guard pinnedCount < 3 else {
+                return .failure("Only 3 messages can be pinned. Unpin one first.")
+            }
+        }
+        let willPin = !message.isPinned
+        do {
+            try await db.collection("projects").document(projectId).collection("chatMessages").document(message.id).updateData([
+                "isPinned": willPin,
+            ])
+            let truncatedText = message.text.count > 60 ? "\(message.text.prefix(60))…" : message.text
+            let action = willPin ? "pinned" : "unpinned"
+            await logActivity(projectId: projectId, text: "\(actorName()) \(action) the message '\(truncatedText)'")
+            return .ok
+        } catch {
+            return .failure("Could not update pin right now.")
         }
     }
 
@@ -544,5 +847,11 @@ final class ProjectsViewModel: ObservableObject {
         } catch {
             return .failure("Could not delete subtask right now.")
         }
+    }
+
+    deinit {
+        projectMainsListener?.remove()
+        chatListener?.remove()
+        expensesListener?.remove()
     }
 }

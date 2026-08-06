@@ -27,9 +27,11 @@ final class AdminEmployeesViewModel: ObservableObject {
                 guard let self, let snapshot else { return }
                 self.employees = snapshot.documents.map { doc in
                     let data = doc.data()
+                    let name = data["name"] as? String ?? "Unknown"
+                    let surname = data["surname"] as? String ?? ""
                     return EmployeeEntry(
                         id: doc.documentID,
-                        name: data["name"] as? String ?? "Unknown",
+                        name: formattedDisplayName(name: name, surname: surname),
                         isEmployed: data["isEmployed"] as? Bool ?? false
                     )
                 }

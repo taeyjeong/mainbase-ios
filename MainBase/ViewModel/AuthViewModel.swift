@@ -95,7 +95,7 @@ final class AuthViewModel: ObservableObject {
         let trimmedDialCode = countryDialCode.trimmingCharacters(in: .whitespaces)
         let fullPhone = trimmedDialCode.isEmpty ? trimmedPhone : "\(trimmedDialCode) \(trimmedPhone)"
 
-        if trimmedName.isEmpty { showError("Please enter your full name"); return }
+        if trimmedName.isEmpty { showError("Please enter your name"); return }
         if trimmedEmail.isEmpty { showError("Please enter your email address"); return }
         if !trimmedEmail.contains("@") || !trimmedEmail.contains(".") {
             showError("Please enter a valid email address"); return
