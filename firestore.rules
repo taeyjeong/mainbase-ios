@@ -61,6 +61,15 @@ service cloud.firestore {
         allow read: if isSignedIn();
         allow create: if isOwner(userId);
         allow update, delete: if false;
+
+        // Any signed-in user can read a report's chat and post messages;
+        // create is pinned to the sender's own uid. Report chat lives in its own
+        // subcollection, which needs its own rule (rules don't cascade).
+        match /chatMessages/{messageId} {
+          allow read: if isSignedIn();
+          allow create: if isSignedIn() && request.resource.data.senderId == request.auth.uid;
+          allow update, delete: if false;
+        }
       }
     }
 

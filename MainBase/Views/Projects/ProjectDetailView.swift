@@ -16,6 +16,7 @@ struct ProjectDetailView: View {
     @State private var now = Date()
     @State private var toolbarPhotoSelection: [PhotosPickerItem] = []
     @State private var isUploadingToolbarPhotos = false
+    @State private var showingChat = false
     @Environment(\.colorScheme) private var colorScheme
 
     private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
@@ -119,9 +120,23 @@ struct ProjectDetailView: View {
                 }
             }
 
-            ProjectChatSection(projectId: project.id, teamMembers: currentProject.teamMembers, vm: vm)
         }
         .listStyle(.plain)
+        .overlay(alignment: .bottomTrailing) {
+            Button {
+                showingChat = true
+            } label: {
+                Image(systemName: "bubble.left.and.bubble.right.fill")
+                    .font(.system(size: 22))
+                    .foregroundColor(.white)
+                    .frame(width: 58, height: 58)
+                    .background(Circle().fill(AppColors.primary))
+                    .shadow(color: .black.opacity(0.25), radius: 8, x: 0, y: 4)
+            }
+            .padding(.trailing, 20)
+            .padding(.bottom, 20)
+            .accessibilityLabel("Open team chat")
+        }
         .onReceive(clockTimer) { now = $0 }
         .background(detailBackgroundColor.ignoresSafeArea())
         .navigationTitle(currentProject.projectTitle)
@@ -146,6 +161,9 @@ struct ProjectDetailView: View {
         }
         .sheet(item: $taskToEdit) { editingTask in
             EditTaskSheet(vm: vm, projectId: project.id, projectTask: editingTask)
+        }
+        .sheet(isPresented: $showingChat) {
+            ProjectChatView(projectId: project.id, teamMembers: currentProject.teamMembers, vm: vm)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
