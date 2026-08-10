@@ -32,7 +32,9 @@ final class TeamMemberViewModel: ObservableObject {
                     return TeamMember(
                         id: doc.documentID,
                         firstName: firstName,
-                        isOnline: data["isOnline"] as? Bool ?? false
+                        isOnline: data["isOnline"] as? Bool ?? false,
+                        emoji: (data["emoji"] as? String) ?? "",
+                        lastClockOut: (data["lastClockOut"] as? Timestamp)?.dateValue()
                     )
                 }
                 self.members = mapped

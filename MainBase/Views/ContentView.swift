@@ -25,8 +25,8 @@ struct ContentView: View {
                         .tabItem { Label("Projects", systemImage: "folder.fill") }
                         .tag(AppTab.projects)
 
-                    OperationsView()
-                        .tabItem { Label("Operations", systemImage: "shippingbox.fill") }
+                    OperationsDiagramsView()
+                        .tabItem { Label("Operations", systemImage: "map.fill") }
                         .tag(AppTab.operations)
                 }
                 .onChange(of: trackerVM.isClockedIn) { _, isClockedIn in

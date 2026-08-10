@@ -14,8 +14,7 @@ struct ProjectDetailView: View {
     @State private var addingSubtaskTaskIds: Set<String> = []
     @State private var errorMessage: String?
     @State private var now = Date()
-    @State private var toolbarPhotoSelection: [PhotosPickerItem] = []
-    @State private var isUploadingToolbarPhotos = false
+    @State private var showingGallery = false
     @State private var showingChat = false
     @Environment(\.colorScheme) private var colorScheme
 
@@ -143,18 +142,13 @@ struct ProjectDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                if isUploadingToolbarPhotos {
-                    ProgressView()
-                } else {
-                    PhotosPicker(selection: $toolbarPhotoSelection, matching: .images) {
-                        Image(systemName: "photo.on.rectangle")
-                    }
+                Button {
+                    showingGallery = true
+                } label: {
+                    Image(systemName: "photo.stack")
                 }
+                .accessibilityLabel("View all photos")
             }
-        }
-        .onChange(of: toolbarPhotoSelection) { _, newItems in
-            guard !newItems.isEmpty else { return }
-            Task { await uploadToolbarPhotos(newItems) }
         }
         .sheet(isPresented: $showingAddTask) {
             AddTaskSheet(vm: vm, projectId: project.id)
@@ -164,6 +158,9 @@ struct ProjectDetailView: View {
         }
         .sheet(isPresented: $showingChat) {
             ProjectChatView(projectId: project.id, teamMembers: currentProject.teamMembers, vm: vm)
+        }
+        .sheet(isPresented: $showingGallery) {
+            ProjectPhotoGalleryView(projectId: project.id, vm: vm)
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }
@@ -178,17 +175,6 @@ struct ProjectDetailView: View {
             vm.stopChatListener()
             vm.stopExpensesListener()
         }
-    }
-
-    private func uploadToolbarPhotos(_ items: [PhotosPickerItem]) async {
-        isUploadingToolbarPhotos = true
-        let images = await loadImages(from: items)
-        toolbarPhotoSelection = []
-        if !images.isEmpty {
-            let result = await vm.addPhotos(projectId: project.id, images: images)
-            if !result.success { errorMessage = result.error }
-        }
-        isUploadingToolbarPhotos = false
     }
 
     private func toggleExpanded(_ taskId: String) {

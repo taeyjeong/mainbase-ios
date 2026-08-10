@@ -94,7 +94,8 @@ final class TimeTrackerViewModel: ObservableObject {
         do {
             try await db.collection("users").document(uid).updateData([
                 "isOnline": false,
-                "clockInTime": FieldValue.delete()
+                "clockInTime": FieldValue.delete(),
+                "lastClockOut": Timestamp(date: now)
             ])
             let historyRef = db.collection("users").document(uid).collection("history").document()
             try await historyRef.setData([

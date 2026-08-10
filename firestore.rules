@@ -86,7 +86,13 @@ service cloud.firestore {
       // touch teamMembers) is enforced by this same check, since it gates the
       // whole update.
       allow update: if isAdmin()
-        || (isSignedIn() && resource.data.projectLead == currentUser().email);
+        || (isSignedIn() && resource.data.projectLead == currentUser().email)
+        // Any signed-in user (e.g. a team member, not just the lead) may add project
+        // photos. photoURLs lives on the main project doc, so this narrowly allows a
+        // photoURLs-only change (plus its updatedAt bump) without exposing the
+        // sensitive fields (projectLead, teamMembers, budget, …) gated above.
+        || (isSignedIn()
+            && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['photoURLs', 'updatedAt']));
 
       allow delete: if isAdmin();
 

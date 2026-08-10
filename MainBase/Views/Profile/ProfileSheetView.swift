@@ -10,6 +10,7 @@ struct ProfileSheetView: View {
     @State private var showSignOutConfirm = false
     @State private var selectedHistoryUserId: String?
     @State private var isEditingEmoji = false
+    @State private var showFlowMap = false
     @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
 
     var body: some View {
@@ -24,6 +25,7 @@ struct ProfileSheetView: View {
                             avatarSection
                             infoCard
                             appearanceSection
+                            flowMapButton
                             if vm.profile.admin {
                                 clockNotificationSection
                                 adminSection
@@ -81,6 +83,9 @@ struct ProfileSheetView: View {
         .confirmationDialog("Sign out of your account?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) { authVM.signOut() }
             Button("Cancel", role: .cancel) {}
+        }
+        .sheet(isPresented: $showFlowMap) {
+            AppFlowMapView()
         }
     }
 
@@ -211,6 +216,37 @@ struct ProfileSheetView: View {
             content()
         }
         .padding(.bottom, 16)
+    }
+
+    private var flowMapButton: some View {
+        Button {
+            showFlowMap = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "map")
+                    .font(.system(size: 18))
+                    .foregroundColor(AppColors.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("App Flow Map")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(AppColors.text)
+                    Text("See how every screen connects")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(AppColors.textSecondary)
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(AppColors.cardBackground)
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var appearanceSection: some View {

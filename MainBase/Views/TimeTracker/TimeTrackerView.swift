@@ -8,6 +8,7 @@ struct TimeTrackerView: View {
     @EnvironmentObject private var authVM: AuthViewModel
     @EnvironmentObject private var vm: TimeTrackerViewModel
     @StateObject private var teamVM = TeamMemberViewModel()
+    @StateObject private var projectsVM = ProjectsViewModel()
 
     @State private var timerDisplay = "00:00:00"
     @State private var showingProfile = false
@@ -42,6 +43,7 @@ struct TimeTrackerView: View {
         .background(AppColors.background.ignoresSafeArea())
         .onAppear {
             teamVM.startListening()
+            Task { await projectsVM.loadProjects() }
         }
         .onReceive(ticker) { now in
             guard vm.isClockedIn, let start = vm.clockInTime else { return }
@@ -64,6 +66,7 @@ struct TimeTrackerView: View {
         .sheet(isPresented: $showClockOutModal) {
             ClockOutSheetView(
                 report: $clockOutReport,
+                completedTasks: completedTasksToday,
                 onCancel: {
                     showClockOutModal = false
                     clockOutReport = ""
@@ -78,6 +81,11 @@ struct TimeTrackerView: View {
         }
     }
 
+    private var currentUserEmoji: String {
+        (teamVM.members.first { $0.id == authVM.currentUserId }?.emoji ?? "")
+            .trimmingCharacters(in: .whitespaces)
+    }
+
     private var topBar: some View {
         HStack {
             Button { showingProfile = true } label: {
@@ -85,9 +93,16 @@ struct TimeTrackerView: View {
                     .fill(AppColors.border)
                     .frame(width: 36, height: 36)
                     .overlay(
-                        Image(systemName: "person.fill")
-                            .font(.system(size: 18))
-                            .foregroundColor(AppColors.textSecondary)
+                        Group {
+                            if currentUserEmoji.isEmpty {
+                                Image(systemName: "person.fill")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(AppColors.textSecondary)
+                            } else {
+                                Text(currentUserEmoji)
+                                    .font(.system(size: 18))
+                            }
+                        }
                     )
             }
             .buttonStyle(.plain)
@@ -124,50 +139,69 @@ struct TimeTrackerView: View {
 
     private var clockCard: some View {
         Button(action: handleClockToggle) {
-            HStack(spacing: 16) {
-                ZStack {
-                    Circle()
-                        .fill(AppColors.cardBackground)
-                        .frame(width: 44, height: 44)
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(vm.isClockedIn ? AppColors.primary : AppColors.textSecondary)
-                        .frame(width: 3, height: 20)
-                        .offset(y: -3)
+            HStack(spacing: 12) {
+                Image(systemName: vm.isClockedIn ? "stop.circle.fill" : "play.circle.fill")
+                    .font(.system(size: 28))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(vm.isClockedIn ? "Clock Out" : "Clock In")
+                        .font(.system(size: 18, weight: .bold))
+                    Text(vm.isClockedIn ? "You're on the clock" : "Ready when you are")
+                        .font(.system(size: 13))
+                        .opacity(0.9)
                 }
 
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(timerDisplay)
-                        .font(.system(size: 32, weight: .heavy))
-                        .foregroundColor(AppColors.cardBackground)
+                Spacer()
+
+                if vm.isSaving {
+                    ProgressView().tint(vm.isClockedIn ? .white : AppColors.primary)
+                } else {
+                    Text(vm.isClockedIn ? timerDisplay : "00:00:00")
+                        .font(.system(size: 18, weight: .semibold, design: .rounded))
                         .monospacedDigit()
-                        .kerning(1)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-
-                    if vm.isSaving {
-                        ProgressView().tint(AppColors.cardBackground)
-                    } else {
-                        Text(vm.isClockedIn ? "Clocked In · Tap to Clock Out" : "Clocked Out · Tap to Clock In")
-                            .font(.system(size: 13))
-                            .foregroundColor(AppColors.cardBackground.opacity(0.9))
-                    }
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 16)
+            .foregroundColor(vm.isClockedIn ? .white : AppColors.text)
+            .padding(18)
+            .frame(maxWidth: .infinity)
             .background(
                 RoundedRectangle(cornerRadius: 20)
-                    .fill(vm.isClockedIn ? AppColors.primary : AppColors.textSecondary)
+                    .fill(vm.isClockedIn ? Color.green : AppColors.cardBackground)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 20)
+                            .stroke(vm.isClockedIn ? Color.clear : AppColors.border, lineWidth: 1.5)
+                    )
             )
         }
         .buttonStyle(.plain)
         .disabled(vm.isSaving)
     }
 
+    /// Top-level tasks the current user marked complete today, across all their projects, shown
+    /// as a checklist on the clock-out sheet.
+    private var completedTasksToday: [CompletedTaskItem] {
+        let email = projectsVM.currentUserEmail.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !email.isEmpty else { return [] }
+        let calendar = Calendar.current
+        return projectsVM.projects.flatMap { project in
+            project.tasks.compactMap { task -> CompletedTaskItem? in
+                guard task.isCompleted,
+                      task.assigneeEmail.trimmingCharacters(in: .whitespaces).lowercased() == email,
+                      let completedAt = task.completedAt,
+                      calendar.isDateInToday(completedAt) else { return nil }
+                return CompletedTaskItem(
+                    id: task.id,
+                    projectTitle: project.projectTitle,
+                    taskTitle: task.title
+                )
+            }
+        }
+    }
+
     private func handleClockToggle() {
         if vm.isClockedIn {
             clockOutReport = ""
+            Task { await projectsVM.loadProjects() }
             showClockOutModal = true
         } else {
             Task {

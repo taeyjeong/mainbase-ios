@@ -1,7 +1,16 @@
 import SwiftUI
 
+/// One task the current user marked complete today, shown as a checklist under the report box
+/// on the clock-out sheet.
+struct CompletedTaskItem: Identifiable {
+    let id: String
+    let projectTitle: String
+    let taskTitle: String
+}
+
 struct ClockOutSheetView: View {
     @Binding var report: String
+    var completedTasks: [CompletedTaskItem] = []
     let onCancel: () -> Void
     let onSubmit: () -> Void
 
@@ -39,6 +48,11 @@ struct ClockOutSheetView: View {
                 .padding(.horizontal, 20)
                 .padding(.bottom, 20)
 
+            if !completedTasks.isEmpty {
+                completedTasksList
+                    .padding(.bottom, 20)
+            }
+
             HStack(spacing: 12) {
                 Button("Cancel", action: onCancel)
                     .font(.system(size: 16, weight: .semibold))
@@ -65,7 +79,38 @@ struct ClockOutSheetView: View {
             .padding(.bottom, 32)
         }
         .background(AppColors.cardBackground)
-        .presentationDetents([.medium])
+        .presentationDetents([.medium, .large])
+    }
+
+    private var completedTasksList: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Completed today")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundColor(AppColors.textSecondary)
+                .padding(.horizontal, 20)
+
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(completedTasks) { task in
+                        HStack(alignment: .top, spacing: 8) {
+                            Text("\(task.projectTitle) - \(task.taskTitle)")
+                                .font(.system(size: 14))
+                                .foregroundColor(AppColors.text)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            Text("COMPLETED")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundColor(.green)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 3)
+                                .background(Capsule().fill(Color.green.opacity(0.12)))
+                        }
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+            .frame(maxHeight: 160)
+        }
     }
 }
 

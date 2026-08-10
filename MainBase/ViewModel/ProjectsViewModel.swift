@@ -643,7 +643,29 @@ final class ProjectsViewModel: ObservableObject {
             await loadProjects()
             return .ok
         } catch {
+            print("addPhotos failed for project \(projectId): \(error)")
             return .failure("Could not upload photos right now.")
+        }
+    }
+
+    func deletePhoto(projectId: String, photoURL: String) async -> ProjectActionResult {
+        do {
+            // Firestore is the source of truth for which photos show, so drop the URL there first.
+            try await db.collection("projects").document(projectId).updateData([
+                "photoURLs": FieldValue.arrayRemove([photoURL]),
+                "updatedAt": FieldValue.serverTimestamp(),
+            ])
+            // Best-effort cleanup of the underlying Storage object; a failure here (e.g. an
+            // already-missing file) shouldn't fail the delete the user just saw succeed.
+            if let ref = try? storage.reference(forURL: photoURL) {
+                try? await ref.delete()
+            }
+            await logActivity(projectId: projectId, text: "\(actorName()) removed a photo")
+            await loadProjects()
+            return .ok
+        } catch {
+            print("deletePhoto failed for project \(projectId): \(error)")
+            return .failure("Could not delete photo right now.")
         }
     }
 

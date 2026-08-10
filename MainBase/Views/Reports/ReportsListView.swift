@@ -6,27 +6,22 @@ struct ReportsListView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            header
-
             if vm.isLoading {
                 ProgressView()
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
-            } else if vm.filteredReports.isEmpty {
-                emptyState(message: vm.selectedUserId == nil ? "No reports yet" : "No reports for this person")
+            } else if vm.reports.isEmpty {
+                emptyState(message: "No reports yet")
             } else {
-                monthNavigator
+                monthAndFilterRow
                     .padding(.bottom, 12)
 
                 if vm.reportsForSelectedMonth.isEmpty {
                     emptyState(message: emptyMonthMessage)
                 } else {
-                    VStack(spacing: 0) {
+                    VStack(spacing: 14) {
                         ForEach(vm.reportsForSelectedMonth) { report in
                             ReportRow(report: report, onOpenChat: { chattingReport = report })
-                            if report.id != vm.reportsForSelectedMonth.last?.id {
-                                Divider()
-                            }
                         }
                     }
                     .padding(.vertical, 8)
@@ -66,24 +61,50 @@ struct ReportsListView: View {
         return "No reports for this person in \(vm.selectedMonthTitle)"
     }
 
-    private var monthNavigator: some View {
-        HStack(spacing: 12) {
-            monthNavButton(systemName: "chevron.left", enabled: vm.canGoToPreviousMonth) {
-                vm.goToPreviousMonth()
-            }
-
-            Spacer(minLength: 8)
-
+    private var monthAndFilterRow: some View {
+        HStack(spacing: 6) {
             Text(vm.selectedMonthTitle)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(AppColors.text)
 
-            Spacer(minLength: 8)
+            monthNavButton(systemName: "chevron.left", enabled: vm.canGoToPreviousMonth) {
+                vm.goToPreviousMonth()
+            }
 
             monthNavButton(systemName: "chevron.right", enabled: vm.canGoToNextMonth) {
                 vm.goToNextMonth()
             }
+
+            Spacer(minLength: 8)
+
+            if !vm.availablePeople.isEmpty {
+                filterMenu
+            }
         }
+    }
+
+    private var filterMenu: some View {
+        Menu {
+            Picker("Filter by person", selection: $vm.selectedUserId) {
+                Text("All people").tag(String?.none)
+                ForEach(vm.availablePeople, id: \.id) { person in
+                    Text(person.name).tag(Optional(person.id))
+                }
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: "line.3.horizontal.decrease.circle")
+                    .font(.system(size: 14, weight: .semibold))
+                Text(selectedFilterLabel)
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .foregroundColor(AppColors.primary)
+        }
+    }
+
+    private var selectedFilterLabel: String {
+        guard let selectedUserId = vm.selectedUserId else { return "All Reports" }
+        return vm.availablePeople.first { $0.id == selectedUserId }?.name ?? "All Reports"
     }
 
     private func monthNavButton(systemName: String, enabled: Bool, action: @escaping () -> Void) -> some View {
@@ -91,7 +112,7 @@ struct ReportsListView: View {
             Image(systemName: systemName)
                 .font(.system(size: 16, weight: .semibold))
                 .foregroundColor(enabled ? AppColors.primary : AppColors.textSecondary.opacity(0.4))
-                .frame(width: 36, height: 36)
+                .frame(width: 32, height: 32)
         }
         .disabled(!enabled)
     }
@@ -110,85 +131,85 @@ struct ReportsListView: View {
             }
     }
 
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Reports")
-                .font(.system(size: 20, weight: .semibold))
-                .foregroundColor(AppColors.text)
-
-            if !vm.availablePeople.isEmpty {
-                HStack {
-                    Text("Filter")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(AppColors.textSecondary)
-
-                    Picker("Filter by person", selection: $vm.selectedUserId) {
-                        Text("All people").tag(String?.none)
-                        ForEach(vm.availablePeople, id: \.id) { person in
-                            Text(person.name).tag(Optional(person.id))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(AppColors.primary)
-                }
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.bottom, 16)
-    }
 }
 
 private struct ReportRow: View {
     let report: Report
     let onOpenChat: () -> Void
 
-    private static let formatter: DateFormatter = {
+    private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
+        formatter.dateFormat = "MMM d"
         return formatter
     }()
+
+    private static let timeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "h:mm a"
+        return formatter
+    }()
+
+    private var formattedTimestamp: String {
+        "\(Self.dateFormatter.string(from: report.timestamp)) · \(Self.timeFormatter.string(from: report.timestamp))"
+    }
+
+    private var displayEmoji: String {
+        report.emoji.trimmingCharacters(in: .whitespaces).isEmpty ? "👻" : report.emoji
+    }
 
     var body: some View {
         let parsed = ReportTextLinks.extract(from: report.reportText)
 
-        HStack(alignment: .center, spacing: 8) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .top) {
-                    Text(report.name)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundColor(AppColors.text)
-                    Spacer()
-                    Text(Self.formatter.string(from: report.timestamp))
-                        .font(.system(size: 14, weight: .bold))
-                        .foregroundColor(AppColors.textSecondary)
-                }
-                if !parsed.cleanedText.isEmpty {
-                    Text(parsed.cleanedText)
-                        .font(.system(size: 14))
-                        .foregroundColor(AppColors.textSecondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                ReportLinksGrid(links: parsed.links)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center) {
+                Text(displayEmoji)
+                    .font(.system(size: 16))
+                    .frame(width: 32, height: 32)
+                    .background(Circle().fill(Color.gray.opacity(0.15)))
+
+                Text(report.name)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundColor(AppColors.text)
+                Spacer()
+                Text(formattedTimestamp)
+                    .font(.system(size: 12))
+                    .foregroundColor(AppColors.textSecondary)
             }
-            messageButton
+            if !parsed.cleanedText.isEmpty {
+                Text(parsed.cleanedText)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.text)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            HStack(alignment: .bottom) {
+                ReportLinksGrid(links: parsed.links)
+                Spacer(minLength: 8)
+                replyButton
+            }
         }
-        .padding(.vertical, 8)
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(AppColors.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+        )
     }
 
-    private var messageButton: some View {
+    private var replyButton: some View {
         Button(action: onOpenChat) {
-            HStack(spacing: 3) {
-                Image(systemName: "message")
-                    .font(.system(size: 13))
-                if report.messageCount > 0 {
-                    Text("\(report.messageCount)")
-                        .font(.system(size: 12, weight: .medium))
-                }
+            HStack(spacing: 5) {
+                Image(systemName: "bubble.left.fill")
+                    .font(.system(size: 11))
+                Text(report.messageCount > 0 ? "Reply · \(report.messageCount)" : "Reply")
+                    .font(.system(size: 12, weight: .semibold))
             }
-            .foregroundColor(AppColors.textSecondary)
+            .foregroundColor(AppColors.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(AppColors.primary.opacity(0.1)))
         }
-        .buttonStyle(.borderless)
+        .buttonStyle(.plain)
     }
 }
 

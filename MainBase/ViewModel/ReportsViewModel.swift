@@ -26,6 +26,7 @@ final class ReportsViewModel: ObservableObject {
     private var reportListeners: [String: ListenerRegistration] = [:]
     private var reportsByUser: [String: [Report]] = [:]
     private var userNames: [String: String] = [:]
+    private var userEmojis: [String: String] = [:]
     private var reportChatListener: ListenerRegistration?
 
     private var currentUserId: String? { Auth.auth().currentUser?.uid }
@@ -46,7 +47,10 @@ final class ReportsViewModel: ObservableObject {
                 let currentUserIds = Set(docs.map { $0.documentID })
 
                 for doc in docs {
-                    self.userNames[doc.documentID] = doc.data()["name"] as? String ?? "Unknown"
+                    let name = doc.data()["name"] as? String ?? "Unknown"
+                    let surname = doc.data()["surname"] as? String ?? ""
+                    self.userNames[doc.documentID] = formattedDisplayName(name: name, surname: surname)
+                    self.userEmojis[doc.documentID] = doc.data()["emoji"] as? String ?? ""
                 }
 
                 for userId in self.reportListeners.keys where !currentUserIds.contains(userId) {
@@ -54,6 +58,7 @@ final class ReportsViewModel: ObservableObject {
                     self.reportListeners.removeValue(forKey: userId)
                     self.reportsByUser.removeValue(forKey: userId)
                     self.userNames.removeValue(forKey: userId)
+                    self.userEmojis.removeValue(forKey: userId)
                 }
 
                 for doc in docs {
@@ -62,11 +67,13 @@ final class ReportsViewModel: ObservableObject {
                         self.attachReportsListener(userId: userId)
                     } else {
                         let name = self.userNames[userId] ?? "Unknown"
+                        let emoji = self.userEmojis[userId] ?? ""
                         self.reportsByUser[userId] = (self.reportsByUser[userId] ?? []).map {
                             Report(
                                 id: $0.id,
                                 userId: userId,
                                 name: name,
+                                emoji: emoji,
                                 reportText: $0.reportText,
                                 timestamp: $0.timestamp,
                                 messageCount: $0.messageCount
@@ -88,6 +95,7 @@ final class ReportsViewModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 let name = self.userNames[userId] ?? "Unknown"
+                let emoji = self.userEmojis[userId] ?? ""
                 let entries = (snapshot?.documents ?? []).compactMap { doc -> Report? in
                     let data = doc.data()
                     guard let ts = data["timestamp"] as? Timestamp else { return nil }
@@ -98,6 +106,7 @@ final class ReportsViewModel: ObservableObject {
                         id: doc.documentID,
                         userId: userId,
                         name: name,
+                        emoji: emoji,
                         reportText: reportText,
                         timestamp: ts.dateValue(),
                         messageCount: messageCount
@@ -166,6 +175,7 @@ final class ReportsViewModel: ObservableObject {
         reportListeners.removeAll()
         reportsByUser.removeAll()
         userNames.removeAll()
+        userEmojis.removeAll()
         reports = []
         isLoading = false
     }
@@ -206,14 +216,16 @@ final class ReportsViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return .failure("Message can't be empty.") }
         guard let currentUserId else { return .failure("You need to be signed in to chat.") }
         do {
-            try await db.collection("users").document(report.userId)
+            let reportRef = db.collection("users").document(report.userId)
                 .collection("reports").document(report.id)
-                .collection("chatMessages").addDocument(data: [
-                    "text": trimmed,
-                    "senderId": currentUserId,
-                    "senderName": currentUserName,
-                    "createdAt": FieldValue.serverTimestamp(),
-                ])
+            try await reportRef.collection("chatMessages").addDocument(data: [
+                "text": trimmed,
+                "senderId": currentUserId,
+                "senderName": currentUserName,
+                "createdAt": FieldValue.serverTimestamp(),
+            ])
+            // Keep the denormalized counter shown on the report card in sync.
+            try await reportRef.updateData(["messageCount": FieldValue.increment(Int64(1))])
             return .ok
         } catch {
             return .failure("Could not send message right now.")

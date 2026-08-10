@@ -17,6 +17,23 @@ struct ReportChatView: View {
         return formatter
     }()
 
+    private static let daySeparatorFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMMM d, yyyy"
+        return formatter
+    }()
+
+    /// Whether a day divider should precede the message at `index` — shown above the first
+    /// message of each calendar day. Messages awaiting a server timestamp (nil `createdAt`)
+    /// don't trigger a divider.
+    private func shouldShowDateSeparator(at index: Int) -> Bool {
+        let messages = vm.currentReportChatMessages
+        guard let current = messages[index].createdAt else { return false }
+        guard index > 0 else { return true }
+        guard let previous = messages[index - 1].createdAt else { return true }
+        return !Calendar.current.isDate(current, inSameDayAs: previous)
+    }
+
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -34,7 +51,10 @@ struct ReportChatView: View {
                                     .frame(maxWidth: .infinity)
                                     .padding(.top, 24)
                             } else {
-                                ForEach(vm.currentReportChatMessages) { message in
+                                ForEach(Array(vm.currentReportChatMessages.enumerated()), id: \.element.id) { index, message in
+                                    if shouldShowDateSeparator(at: index), let createdAt = message.createdAt {
+                                        dateSeparator(createdAt)
+                                    }
                                     ReportChatMessageRow(message: message, formatter: Self.timeFormatter)
                                         .id(message.id)
                                 }
@@ -89,6 +109,14 @@ struct ReportChatView: View {
             .onAppear { vm.startReportChatListener(report: report) }
             .onDisappear { vm.stopReportChatListener() }
         }
+    }
+
+    private func dateSeparator(_ date: Date) -> some View {
+        Text(Self.daySeparatorFormatter.string(from: date))
+            .font(.system(size: 12, weight: .medium))
+            .foregroundColor(AppColors.textSecondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 4)
     }
 
     private var reportHeader: some View {
@@ -154,7 +182,7 @@ private struct ReportChatMessageRow: View {
 
 #Preview {
     ReportChatView(
-        report: Report(id: "1", userId: "u1", name: "Jordan", reportText: "Sample report", timestamp: Date(), messageCount: 0),
+        report: Report(id: "1", userId: "u1", name: "Jordan", emoji: "🦊", reportText: "Sample report", timestamp: Date(), messageCount: 0),
         vm: ReportsViewModel()
     )
 }
