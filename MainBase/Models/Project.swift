@@ -26,6 +26,15 @@ enum ProjectLabel: String, CaseIterable {
     }
 }
 
+/// The flat set of sublabels a project can be tagged with. Projects no longer carry a
+/// Marketing/Development label — you just pick any number of these directly.
+enum ProjectSublabels {
+    static let allOptions = [
+        "SEO", "Meta Ads", "Social Media", "Analytics", "Influencer collabs",
+        "Systems", "Mobile", "Web", "WordPress", "Design", "IRL", "Other",
+    ]
+}
+
 struct ProjectSubtask: Identifiable {
     let id: String
     var title: String

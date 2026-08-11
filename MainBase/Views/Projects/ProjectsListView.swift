@@ -3,7 +3,6 @@ import SwiftUI
 struct ProjectsListView: View {
     @StateObject private var vm = ProjectsViewModel()
     @State private var showingAddProject = false
-    @State private var showingArchives = false
     @State private var editingProject: Project?
     @State private var projectPendingDelete: Project?
 
@@ -22,7 +21,7 @@ struct ProjectsListView: View {
                                 ProjectRow(
                                     project: project,
                                     main: vm.projectMain(withId: project.projectMainId),
-                                    teamMemberTag: vm.teamMemberTag(forEmail:)
+                                    emojiTag: vm.emojiTag(forEmail:)
                                 )
                             }
                             .buttonStyle(.plain)
@@ -72,16 +71,6 @@ struct ProjectsListView: View {
                 }
             }
             .toolbar {
-                if vm.currentUserIsAdmin {
-                    ToolbarItem(placement: .topBarLeading) {
-                        Button {
-                            showingArchives = true
-                        } label: {
-                            Image(systemName: "archivebox")
-                        }
-                        .accessibilityLabel("Show Archives")
-                    }
-                }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         showingAddProject = true
@@ -97,9 +86,6 @@ struct ProjectsListView: View {
         }
         .sheet(item: $editingProject) { project in
             EditProjectSheet(vm: vm, project: project)
-        }
-        .sheet(isPresented: $showingArchives) {
-            ArchivedProjectsView(vm: vm)
         }
         .confirmationDialog(
             "Delete \(projectPendingDelete?.projectTitle ?? "this project")?",
@@ -143,7 +129,7 @@ private let projectCardStartDateFormatter: DateFormatter = {
 private struct ProjectRow: View {
     let project: Project
     let main: ProjectMain?
-    let teamMemberTag: (String) -> String
+    let emojiTag: (String) -> String
 
     private var completedTaskCount: Int {
         project.tasks.filter { $0.isCompleted }.count
@@ -160,9 +146,9 @@ private struct ProjectRow: View {
     }
 
     private var leadersMembersLine: String {
-        var parts: [String] = ["Lead: \(teamMemberTag(project.projectLead))"]
+        var parts: [String] = ["Lead: \(emojiTag(project.projectLead))"]
         if !project.teamMembers.isEmpty {
-            parts.append(project.teamMembers.map(teamMemberTag).joined(separator: ", "))
+            parts.append(project.teamMembers.map(emojiTag).joined(separator: " "))
         }
         return parts.joined(separator: " • ")
     }

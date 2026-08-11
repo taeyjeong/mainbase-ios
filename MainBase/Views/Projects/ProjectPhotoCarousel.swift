@@ -32,6 +32,8 @@ struct ProjectPhotoCarousel: View {
                         }
                         .tag(index)
                         .clipped()
+                        .contentShape(Rectangle())
+                        .onTapGesture { showingFullscreen = true }
                     }
                 }
                 .tabViewStyle(.page(indexDisplayMode: .automatic))

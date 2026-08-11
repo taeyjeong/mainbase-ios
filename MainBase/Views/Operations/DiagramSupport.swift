@@ -59,6 +59,73 @@ struct DiagramConnector {
     }
 }
 
+/// Wraps a fixed-size diagram canvas in a scrollable, pinch-zoomable container with a small
+/// +/− control cluster. Shared by the Operations diagrams so zooming behaves identically across
+/// them: the node/connector layout stays in its own fixed coordinate space and only the rendered
+/// canvas is scaled, so lines and cards never re-flow.
+struct ZoomableCanvas: ViewModifier {
+    @Binding var zoom: CGFloat
+    let canvasSize: CGSize
+
+    private let range: ClosedRange<CGFloat> = 0.5...2.5
+    private let step: CGFloat = 0.25
+    @GestureState private var gestureScale: CGFloat = 1
+
+    func body(content: Content) -> some View {
+        ZStack(alignment: .bottomTrailing) {
+            ScrollView([.horizontal, .vertical], showsIndicators: false) {
+                content
+                    .scaleEffect(zoom * gestureScale, anchor: .topLeading)
+                    .frame(width: canvasSize.width * zoom * gestureScale,
+                           height: canvasSize.height * zoom * gestureScale,
+                           alignment: .topLeading)
+                    .padding(20)
+            }
+            .gesture(
+                MagnificationGesture()
+                    .updating($gestureScale) { value, state, _ in state = value }
+                    .onEnded { value in setZoom(zoom * value) }
+            )
+
+            controls
+        }
+    }
+
+    private var controls: some View {
+        HStack(spacing: 0) {
+            zoomButton("minus") { setZoom(zoom - step) }
+            Divider().frame(height: 20).overlay(AppColors.border)
+            zoomButton("plus") { setZoom(zoom + step) }
+        }
+        .background(RoundedRectangle(cornerRadius: 10).fill(AppColors.cardBackground))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(AppColors.border, lineWidth: 1))
+        .shadow(color: .black.opacity(0.12), radius: 6, y: 2)
+        .padding(16)
+    }
+
+    private func zoomButton(_ icon: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: icon)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundColor(AppColors.primary)
+                .frame(width: 40, height: 36)
+        }
+    }
+
+    private func setZoom(_ value: CGFloat) {
+        withAnimation(.easeOut(duration: 0.15)) {
+            zoom = min(max(value, range.lowerBound), range.upperBound)
+        }
+    }
+}
+
+extension View {
+    /// Makes a fixed-size diagram canvas scrollable and pinch/tap zoomable.
+    func zoomableCanvas(zoom: Binding<CGFloat>, canvasSize: CGSize) -> some View {
+        modifier(ZoomableCanvas(zoom: zoom, canvasSize: canvasSize))
+    }
+}
+
 enum DiagramDraw {
     /// Strokes a connector and fills a triangular arrowhead at its tip.
     static func arrow(_ context: inout GraphicsContext,

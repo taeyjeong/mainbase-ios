@@ -7,18 +7,16 @@ struct UserFlowDiagram: View {
     private let screens = UserFlowSample.screens
     private let edges = UserFlowSample.edges
 
-    private let canvasSize = CGSize(width: 650, height: 400)
+    private let canvasSize = CGSize(width: 460, height: 780)
     private let lineColor = AppColors.primary.opacity(0.6)
+    @State private var zoom: CGFloat = 1
 
     private func screen(_ id: String) -> AppScreen { screens.first { $0.id == id }! }
 
     var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                heading
-                diagram
-            }
-            .padding(20)
+        VStack(alignment: .leading, spacing: 12) {
+            heading.padding([.horizontal, .top], 20)
+            diagram.zoomableCanvas(zoom: $zoom, canvasSize: canvasSize)
         }
     }
 
@@ -140,22 +138,24 @@ enum UserFlowSample {
     private static let mainTint = AppColors.primary
     private static let neutralTint = Color(hex: "#8E8E93")
 
+    // Laid out top-to-bottom: launch flows down the center column, with the account-creation
+    // branch stepping out to the right and the home destinations fanning out at the bottom.
     static let screens: [AppScreen] = [
-        AppScreen(id: "splash", title: "Splash", icon: "sparkles", tint: neutralTint, center: CGPoint(x: 75, y: 188)),
-        AppScreen(id: "signin", title: "Sign In", icon: "lock", tint: authTint, center: CGPoint(x: 235, y: 95)),
-        AppScreen(id: "signup", title: "Sign Up", icon: "person.badge.plus", tint: authTint, center: CGPoint(x: 235, y: 300)),
-        AppScreen(id: "home", title: "Home", icon: "house", tint: mainTint, center: CGPoint(x: 395, y: 188)),
-        AppScreen(id: "detail", title: "Project", icon: "folder", tint: mainTint, center: CGPoint(x: 555, y: 95)),
-        AppScreen(id: "profile", title: "Profile", icon: "person", tint: mainTint, center: CGPoint(x: 555, y: 300)),
+        AppScreen(id: "splash", title: "Splash", icon: "sparkles", tint: neutralTint, center: CGPoint(x: 190, y: 90)),
+        AppScreen(id: "signin", title: "Sign In", icon: "lock", tint: authTint, center: CGPoint(x: 190, y: 290)),
+        AppScreen(id: "signup", title: "Sign Up", icon: "person.badge.plus", tint: authTint, center: CGPoint(x: 370, y: 290)),
+        AppScreen(id: "home", title: "Home", icon: "house", tint: mainTint, center: CGPoint(x: 190, y: 490)),
+        AppScreen(id: "detail", title: "Project", icon: "folder", tint: mainTint, center: CGPoint(x: 110, y: 690)),
+        AppScreen(id: "profile", title: "Profile", icon: "person", tint: mainTint, center: CGPoint(x: 290, y: 690)),
     ]
 
     static let edges: [UserFlowEdge] = [
-        UserFlowEdge(from: "splash", to: "signin", label: "Launch"),
-        UserFlowEdge(from: "signin", to: "signup", label: "Create account", axis: .vertical),
-        UserFlowEdge(from: "signin", to: "home", label: "Log in"),
-        UserFlowEdge(from: "signup", to: "home", label: "Register"),
-        UserFlowEdge(from: "home", to: "detail", label: "Open project"),
-        UserFlowEdge(from: "home", to: "profile", label: "Account"),
+        UserFlowEdge(from: "splash", to: "signin", label: "Launch", axis: .vertical),
+        UserFlowEdge(from: "signin", to: "signup", label: "Create account", axis: .horizontal),
+        UserFlowEdge(from: "signin", to: "home", label: "Log in", axis: .vertical),
+        UserFlowEdge(from: "signup", to: "home", label: "Register", axis: .vertical),
+        UserFlowEdge(from: "home", to: "detail", label: "Open project", axis: .vertical),
+        UserFlowEdge(from: "home", to: "profile", label: "Account", axis: .vertical),
     ]
 }
 

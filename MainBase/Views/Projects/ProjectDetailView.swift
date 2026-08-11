@@ -7,11 +7,14 @@ struct ProjectDetailView: View {
     @ObservedObject var vm: ProjectsViewModel
 
     @State private var expandedTaskIds: Set<String> = []
-    @State private var showingAddTask = false
     @State private var taskToEdit: ProjectTask?
     @State private var savingTaskIds: Set<String> = []
     @State private var savingSubtaskIds: Set<String> = []
     @State private var addingSubtaskTaskIds: Set<String> = []
+    @State private var isAddingTask = false
+    @State private var isEditingDescription = false
+    @State private var descriptionDraft = ""
+    @State private var isSavingDescription = false
     @State private var errorMessage: String?
     @State private var now = Date()
     @State private var showingGallery = false
@@ -41,12 +44,45 @@ struct ProjectDetailView: View {
 
             Section {
                 VStack(alignment: .leading, spacing: 8) {
-                    if !currentProject.projectDescription.isEmpty {
+                    if isEditingDescription {
+                        TextField("Description", text: $descriptionDraft, axis: .vertical)
+                            .font(.system(size: 15))
+                            .lineLimit(3...8)
+                            .inputFieldStyle()
+                        HStack(spacing: 16) {
+                            Spacer()
+                            Button("Cancel") { isEditingDescription = false }
+                                .buttonStyle(.borderless)
+                                .foregroundColor(AppColors.textSecondary)
+                            if isSavingDescription {
+                                ProgressView().scaleEffect(0.8)
+                            } else {
+                                Button("Save") { Task { await saveDescription() } }
+                                    .buttonStyle(.borderless)
+                                    .foregroundColor(AppColors.primary)
+                            }
+                        }
+                        .font(.system(size: 14, weight: .semibold))
+                    } else if currentProject.projectDescription.isEmpty {
+                        if canEditProject {
+                            Text("Add a description…")
+                                .font(.system(size: 15))
+                                .foregroundColor(AppColors.textSecondary)
+                        }
+                    } else {
                         DescriptionText(text: currentProject.projectDescription)
                     }
+
                     Text("Lead: \(vm.displayName(forEmail: currentProject.projectLead))")
                         .font(.system(size: 13))
                         .foregroundColor(AppColors.textSecondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    guard canEditProject, !isEditingDescription else { return }
+                    descriptionDraft = currentProject.projectDescription
+                    isEditingDescription = true
                 }
                 .listRowBackground(AppColors.cardBackground)
             }
@@ -105,17 +141,15 @@ struct ProjectDetailView: View {
                         }
                     }
                 }
+
+                QuickAddRow(placeholder: "New task", isSaving: isAddingTask) { title in
+                    await addTaskInline(title)
+                }
+                .listRowBackground(AppColors.cardBackground)
             } header: {
                 HStack {
                     Text("Tasks")
                     Spacer()
-                    Button {
-                        showingAddTask = true
-                    } label: {
-                        Text("Add Task")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(AppColors.primary)
-                    }
                 }
             }
 
@@ -150,9 +184,6 @@ struct ProjectDetailView: View {
                 .accessibilityLabel("View all photos")
             }
         }
-        .sheet(isPresented: $showingAddTask) {
-            AddTaskSheet(vm: vm, projectId: project.id)
-        }
         .sheet(item: $taskToEdit) { editingTask in
             EditTaskSheet(vm: vm, projectId: project.id, projectTask: editingTask)
         }
@@ -175,6 +206,29 @@ struct ProjectDetailView: View {
             vm.stopChatListener()
             vm.stopExpensesListener()
         }
+    }
+
+    private var canEditProject: Bool {
+        vm.canEditOrArchive(currentProject)
+    }
+
+    private func saveDescription() async {
+        isSavingDescription = true
+        let result = await vm.updateProjectDescription(projectId: project.id, description: descriptionDraft)
+        isSavingDescription = false
+        if result.success {
+            isEditingDescription = false
+        } else {
+            errorMessage = result.error
+        }
+    }
+
+    private func addTaskInline(_ title: String) async -> Bool {
+        isAddingTask = true
+        let result = await vm.submitAddTask(projectId: project.id, title: title, assigneeEmail: "")
+        isAddingTask = false
+        if !result.success { errorMessage = result.error }
+        return result.success
     }
 
     private func toggleExpanded(_ taskId: String) {
@@ -293,7 +347,7 @@ private struct TaskRow: View {
                 .padding(.leading, 28)
             }
 
-            AddSubtaskInlineControl(isSaving: isAddingSubtaskSaving, onAdd: onAddSubtask)
+            QuickAddRow(placeholder: "Add subtask", isSaving: isAddingSubtaskSaving, onAdd: onAddSubtask)
                 .padding(.leading, 28)
         }
         .padding(.vertical, 6)
@@ -366,66 +420,47 @@ private struct SubtaskRow: View {
     }
 }
 
-/// Replaces the "Add Subtask" button with a text field in place; on submit the title is handed
-/// off to `onAdd` and, once saved, the control resets back to the button so another can be added.
-private struct AddSubtaskInlineControl: View {
-    let isSaving: Bool
+/// A compact, always-visible "type a title and tap +" row for adding tasks and subtasks inline —
+/// no sheet. The Add button uses `.borderless` so its tap registers reliably inside a `List` row
+/// (a plain Button there can otherwise fail to fire). Clears itself once `onAdd` reports success.
+struct QuickAddRow: View {
+    let placeholder: String
+    var isSaving: Bool = false
     let onAdd: (String) async -> Bool
 
-    @State private var isEditing = false
-    @State private var title = ""
-    @FocusState private var isFocused: Bool
+    @State private var text = ""
+
+    private var trimmed: String { text.trimmingCharacters(in: .whitespaces) }
 
     var body: some View {
-        if isEditing {
-            HStack(spacing: 8) {
-                TextField("Subtask title", text: $title)
-                    .font(.system(size: 13))
-                    .foregroundColor(AppColors.text)
-                    .focused($isFocused)
-                    .submitLabel(.done)
-                    .disabled(isSaving)
-                    .onSubmit { Task { await submit() } }
+        HStack(spacing: 8) {
+            TextField(placeholder, text: $text)
+                .font(.system(size: 14))
+                .foregroundColor(AppColors.text)
+                .submitLabel(.done)
+                .disabled(isSaving)
+                .onSubmit(submit)
 
-                if isSaving {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                } else {
-                    Button("Add") { Task { await submit() } }
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(AppColors.primary)
-                        .disabled(title.trimmingCharacters(in: .whitespaces).isEmpty)
-
-                    Button("Cancel") {
-                        isEditing = false
-                        title = ""
-                    }
-                    .font(.system(size: 12))
-                    .foregroundColor(AppColors.textSecondary)
+            if isSaving {
+                ProgressView().scaleEffect(0.7)
+            } else {
+                Button(action: submit) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 20))
+                        .foregroundColor(trimmed.isEmpty ? AppColors.textSecondary.opacity(0.4) : AppColors.primary)
                 }
-            }
-            .onAppear { isFocused = true }
-        } else {
-            Button {
-                isEditing = true
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "plus")
-                    Text("Add Subtask")
-                }
-                .font(.system(size: 12, weight: .medium))
-                .foregroundColor(AppColors.primary)
+                .buttonStyle(.borderless)
+                .disabled(trimmed.isEmpty)
             }
         }
     }
 
-    private func submit() async {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespaces)
-        guard !trimmedTitle.isEmpty else { return }
-        let success = await onAdd(trimmedTitle)
-        if success {
-            title = ""
-            isEditing = false
+    private func submit() {
+        let value = trimmed
+        guard !value.isEmpty, !isSaving else { return }
+        Task {
+            let success = await onAdd(value)
+            if success { text = "" }
         }
     }
 }

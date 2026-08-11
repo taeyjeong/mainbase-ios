@@ -1,10 +1,10 @@
 import SwiftUI
 
-/// Shared Main / Label / Sublabels picker used by both AddProjectSheet and EditProjectSheet.
+/// Shared Main / Sublabels picker used by both AddProjectSheet and EditProjectSheet. Projects no
+/// longer carry a Marketing/Development label — you pick any number of sublabels directly.
 struct ProjectCategoryPicker: View {
     let projectMains: [ProjectMain]
     @Binding var selectedMainId: String
-    @Binding var selectedLabel: ProjectLabel
     @Binding var selectedSublabels: Set<String>
 
     var body: some View {
@@ -27,26 +27,11 @@ struct ProjectCategoryPicker: View {
             }
 
             VStack(alignment: .leading, spacing: 8) {
-                Text("Label")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundColor(AppColors.text)
-                Picker("Label", selection: $selectedLabel) {
-                    ForEach(ProjectLabel.allCases, id: \.self) { label in
-                        Text(label.displayName).tag(label)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .onChange(of: selectedLabel) { _, _ in
-                    selectedSublabels = []
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 8) {
                 Text("Sublabels")
                     .font(.system(size: 16, weight: .medium))
                     .foregroundColor(AppColors.text)
                 SublabelChipsView(
-                    options: selectedLabel.sublabelOptions,
+                    options: ProjectSublabels.allOptions,
                     selected: $selectedSublabels
                 )
             }

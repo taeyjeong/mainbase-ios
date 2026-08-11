@@ -7,18 +7,16 @@ struct DatabaseDesignDiagram: View {
     private let tables = SchemaSample.tables
     private let relationships = SchemaSample.relationships
 
-    private let canvasSize = CGSize(width: 720, height: 480)
+    private let canvasSize = CGSize(width: 600, height: 700)
     private let lineColor = AppColors.textSecondary.opacity(0.6)
+    @State private var zoom: CGFloat = 1
 
     private func table(_ id: String) -> ERTable { tables.first { $0.id == id }! }
 
     var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                heading
-                diagram
-            }
-            .padding(20)
+        VStack(alignment: .leading, spacing: 12) {
+            heading.padding([.horizontal, .top], 20)
+            diagram.zoomableCanvas(zoom: $zoom, canvasSize: canvasSize)
         }
     }
 
@@ -176,16 +174,18 @@ struct ERRelationship: Identifiable {
 enum SchemaSample {
     static let rowHeight: CGFloat = 26
 
+    // Stacked top-to-bottom: User → Project down the center, then Project's children (Report,
+    // Task, TimeEntry) fan out across the bottom row.
     static let tables: [ERTable] = [
         ERTable(id: "user", name: "User", icon: "person.fill", tint: Color(hex: "#34C759"),
-                origin: CGPoint(x: 40, y: 40), width: 150, columns: [
+                origin: CGPoint(x: 200, y: 30), width: 150, columns: [
                     ERColumn(name: "id", type: "uuid", isPrimaryKey: true),
                     ERColumn(name: "name", type: "text"),
                     ERColumn(name: "email", type: "text"),
                     ERColumn(name: "role", type: "enum"),
                 ]),
         ERTable(id: "project", name: "Project", icon: "folder.fill", tint: AppColors.primary,
-                origin: CGPoint(x: 300, y: 40), width: 170, columns: [
+                origin: CGPoint(x: 190, y: 250), width: 170, columns: [
                     ERColumn(name: "id", type: "uuid", isPrimaryKey: true),
                     ERColumn(name: "owner_id", type: "uuid", isForeignKey: true),
                     ERColumn(name: "name", type: "text"),
@@ -193,35 +193,35 @@ enum SchemaSample {
                     ERColumn(name: "budget", type: "money"),
                 ]),
         ERTable(id: "report", name: "Report", icon: "doc.text.fill", tint: Color(hex: "#00B8A9"),
-                origin: CGPoint(x: 560, y: 40), width: 150, columns: [
+                origin: CGPoint(x: 30, y: 500), width: 150, columns: [
                     ERColumn(name: "id", type: "uuid", isPrimaryKey: true),
                     ERColumn(name: "project_id", type: "uuid", isForeignKey: true),
                     ERColumn(name: "title", type: "text"),
                     ERColumn(name: "url", type: "text"),
                 ]),
+        ERTable(id: "task", name: "Task", icon: "checklist", tint: Color(hex: "#FF9500"),
+                origin: CGPoint(x: 215, y: 500), width: 150, columns: [
+                    ERColumn(name: "id", type: "uuid", isPrimaryKey: true),
+                    ERColumn(name: "project_id", type: "uuid", isForeignKey: true),
+                    ERColumn(name: "title", type: "text"),
+                    ERColumn(name: "done", type: "bool"),
+                ]),
         ERTable(id: "time_entry", name: "TimeEntry", icon: "clock.fill", tint: Color(hex: "#AF52DE"),
-                origin: CGPoint(x: 160, y: 300), width: 180, columns: [
+                origin: CGPoint(x: 400, y: 500), width: 180, columns: [
                     ERColumn(name: "id", type: "uuid", isPrimaryKey: true),
                     ERColumn(name: "user_id", type: "uuid", isForeignKey: true),
                     ERColumn(name: "project_id", type: "uuid", isForeignKey: true),
                     ERColumn(name: "clock_in", type: "timestamp"),
                     ERColumn(name: "clock_out", type: "timestamp"),
                 ]),
-        ERTable(id: "task", name: "Task", icon: "checklist", tint: Color(hex: "#FF9500"),
-                origin: CGPoint(x: 470, y: 320), width: 150, columns: [
-                    ERColumn(name: "id", type: "uuid", isPrimaryKey: true),
-                    ERColumn(name: "project_id", type: "uuid", isForeignKey: true),
-                    ERColumn(name: "title", type: "text"),
-                    ERColumn(name: "done", type: "bool"),
-                ]),
     ]
 
     static let relationships: [ERRelationship] = [
-        ERRelationship(from: "user", fromSide: .trailing, to: "project", toSide: .leading, axis: .horizontal),
-        ERRelationship(from: "project", fromSide: .trailing, to: "report", toSide: .leading, axis: .horizontal),
+        ERRelationship(from: "user", fromSide: .bottom, to: "project", toSide: .top, axis: .vertical),
+        ERRelationship(from: "project", fromSide: .bottom, to: "report", toSide: .top, axis: .vertical),
         ERRelationship(from: "project", fromSide: .bottom, to: "task", toSide: .top, axis: .vertical),
-        ERRelationship(from: "user", fromSide: .bottom, to: "time_entry", toSide: .leading, axis: .vertical),
-        ERRelationship(from: "project", fromSide: .bottom, to: "time_entry", toSide: .trailing, axis: .vertical),
+        ERRelationship(from: "project", fromSide: .bottom, to: "time_entry", toSide: .top, axis: .vertical),
+        ERRelationship(from: "user", fromSide: .trailing, to: "time_entry", toSide: .top, axis: .vertical),
     ]
 }
 

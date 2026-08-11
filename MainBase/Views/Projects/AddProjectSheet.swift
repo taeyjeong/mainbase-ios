@@ -7,7 +7,6 @@ struct AddProjectSheet: View {
     @State private var title = ""
     @State private var description = ""
     @State private var selectedMainId = ""
-    @State private var selectedLabel: ProjectLabel = .marketing
     @State private var selectedSublabels: Set<String> = []
     @State private var teamMembers: Set<String> = []
     @State private var budgetText = ""
@@ -32,7 +31,6 @@ struct AddProjectSheet: View {
                     ProjectCategoryPicker(
                         projectMains: vm.projectMains,
                         selectedMainId: $selectedMainId,
-                        selectedLabel: $selectedLabel,
                         selectedSublabels: $selectedSublabels
                     )
 
@@ -78,7 +76,6 @@ struct AddProjectSheet: View {
             title: title,
             description: description,
             projectMainId: selectedMainId,
-            label: selectedLabel,
             sublabels: Array(selectedSublabels),
             teamMembers: Array(teamMembers),
             budget: Double(budgetText)

@@ -61,15 +61,27 @@ struct ReportsListView: View {
         return "No reports for this person in \(vm.selectedMonthTitle)"
     }
 
-    private var monthAndFilterRow: some View {
-        HStack(spacing: 6) {
-            Text(vm.selectedMonthTitle)
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(AppColors.text)
+    private static let shortMonthFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM yyyy"
+        return formatter
+    }()
 
+    private var shortMonthTitle: String {
+        Self.shortMonthFormatter.string(from: vm.selectedMonth)
+    }
+
+    private var monthAndFilterRow: some View {
+        HStack(spacing: 4) {
             monthNavButton(systemName: "chevron.left", enabled: vm.canGoToPreviousMonth) {
                 vm.goToPreviousMonth()
             }
+
+            Text(shortMonthTitle)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundColor(AppColors.text)
+                .frame(minWidth: 88)
+                .multilineTextAlignment(.center)
 
             monthNavButton(systemName: "chevron.right", enabled: vm.canGoToNextMonth) {
                 vm.goToNextMonth()

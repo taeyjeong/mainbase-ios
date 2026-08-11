@@ -186,10 +186,28 @@ final class ProjectsViewModel: ObservableObject {
         return "\(firstName) \(emoji)"
     }
 
+    /// Just the person's profile emoji — used on project cards where the lead/members line shows
+    /// emojis instead of names. Falls back to the first name if they haven't set an emoji yet.
+    func emojiTag(forEmail email: String) -> String {
+        let key = email.trimmingCharacters(in: .whitespaces).lowercased()
+        if let emoji = userEmojisByEmail[key], !emoji.isEmpty { return emoji }
+        return userFirstNamesByEmail[key] ?? email
+    }
+
     func loadArchivedProjects() async {
         isLoadingArchivedProjects = true
         defer { isLoadingArchivedProjects = false }
-        let allProjects = await fetchProjects()
+        // Also load user info/names here so this view works standalone (it's opened from Profile,
+        // which doesn't run loadProjects): unarchive needs the admin flag, and rows show lead names.
+        async let fetchedProjects = fetchProjects()
+        async let fetchedUsers = fetchAssignableUsers()
+        async let fetchedUserInfo = loadCurrentUserInfo()
+        let (allProjects, loadedUsers, userInfo) = await (fetchedProjects, fetchedUsers, fetchedUserInfo)
+        currentUserEmail = userInfo.email
+        currentUserIsAdmin = userInfo.isAdmin
+        if userNamesByEmail.isEmpty {
+            userNamesByEmail = Dictionary(uniqueKeysWithValues: loadedUsers.map { ($0.email.lowercased(), $0.name) })
+        }
         archivedProjects = allProjects.filter { $0.isArchived }
     }
 
@@ -376,7 +394,6 @@ final class ProjectsViewModel: ObservableObject {
         title: String,
         description: String,
         projectMainId: String,
-        label: ProjectLabel,
         sublabels: [String],
         teamMembers: [String],
         budget: Double?
@@ -387,7 +404,6 @@ final class ProjectsViewModel: ObservableObject {
         guard !projectTitle.isEmpty else { return .failure("Project title is required.") }
         guard !projectLead.isEmpty else { return .failure("Missing project lead email. Please sign in again.") }
         guard !projectMainId.isEmpty else { return .failure("Please select a Main.") }
-        guard !sublabels.isEmpty else { return .failure("Please select at least one sublabel.") }
 
         do {
             _ = try await db.collection("projects").addDocument(data: [
@@ -396,7 +412,7 @@ final class ProjectsViewModel: ObservableObject {
                 "projectLead": projectLead,
                 "teamMembers": cleanedEmailList(teamMembers),
                 "projectMainId": projectMainId,
-                "label": label.rawValue,
+                "label": "",
                 "sublabels": sublabels,
                 "photoURLs": [String](),
                 "budget": budget.map { $0 as Any } ?? NSNull(),
@@ -581,7 +597,6 @@ final class ProjectsViewModel: ObservableObject {
         projectLead: String,
         teamMembers: [String],
         projectMainId: String,
-        label: ProjectLabel,
         sublabels: [String],
         budget: Double?
     ) async -> ProjectActionResult {
@@ -597,7 +612,6 @@ final class ProjectsViewModel: ObservableObject {
         guard !trimmedTitle.isEmpty else { return .failure("Project title is required.") }
         guard !trimmedLead.isEmpty else { return .failure("Project lead is required.") }
         guard !projectMainId.isEmpty else { return .failure("Please select a Main.") }
-        guard !sublabels.isEmpty else { return .failure("Please select at least one sublabel.") }
 
         do {
             try await db.collection("projects").document(projectId).updateData([
@@ -606,7 +620,7 @@ final class ProjectsViewModel: ObservableObject {
                 "projectLead": trimmedLead,
                 "teamMembers": cleanedEmailList(teamMembers),
                 "projectMainId": projectMainId,
-                "label": label.rawValue,
+                "label": "",
                 "sublabels": sublabels,
                 "budget": budget.map { $0 as Any } ?? NSNull(),
                 "lastEditedByEmail": currentUserEmail,
@@ -616,6 +630,28 @@ final class ProjectsViewModel: ObservableObject {
             return .ok
         } catch {
             return .failure("Could not update project right now.")
+        }
+    }
+
+    /// Focused update for editing just the project description inline (tap-to-edit on the detail
+    /// screen), without going through the full edit-project form.
+    func updateProjectDescription(projectId: String, description: String) async -> ProjectActionResult {
+        guard let existing = projects.first(where: { $0.id == projectId }) else {
+            return .failure("Project not found.")
+        }
+        guard canEditOrArchive(existing) else {
+            return .failure("Only the project lead or an admin can edit the description.")
+        }
+        do {
+            try await db.collection("projects").document(projectId).updateData([
+                "projectDescription": description.trimmingCharacters(in: .whitespacesAndNewlines),
+                "lastEditedByEmail": currentUserEmail,
+                "updatedAt": FieldValue.serverTimestamp(),
+            ])
+            await loadProjects()
+            return .ok
+        } catch {
+            return .failure("Could not update description right now.")
         }
     }
 

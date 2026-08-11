@@ -6,11 +6,13 @@ struct ProfileSheetView: View {
     @StateObject private var vm = ProfileViewModel()
     @StateObject private var historyVM = HistoryViewModel()
     @StateObject private var adminVM = AdminEmployeesViewModel()
+    @StateObject private var projectsVM = ProjectsViewModel()
 
     @State private var showSignOutConfirm = false
     @State private var selectedHistoryUserId: String?
     @State private var isEditingEmoji = false
     @State private var showFlowMap = false
+    @State private var showArchivedProjects = false
     @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
 
     var body: some View {
@@ -29,6 +31,7 @@ struct ProfileSheetView: View {
                             if vm.profile.admin {
                                 clockNotificationSection
                                 adminSection
+                                archivedProjectsButton
                                 ManageProjectMainsView()
                             }
                             historySection
@@ -87,6 +90,40 @@ struct ProfileSheetView: View {
         .sheet(isPresented: $showFlowMap) {
             AppFlowMapView()
         }
+        .sheet(isPresented: $showArchivedProjects) {
+            ArchivedProjectsView(vm: projectsVM)
+        }
+    }
+
+    private var archivedProjectsButton: some View {
+        Button {
+            showArchivedProjects = true
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: "archivebox")
+                    .font(.system(size: 18))
+                    .foregroundColor(AppColors.primary)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Archived Projects")
+                        .font(.system(size: 16, weight: .semibold))
+                        .foregroundColor(AppColors.text)
+                    Text("View and restore archived projects")
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.textSecondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(AppColors.textSecondary)
+            }
+            .padding(16)
+            .background(
+                RoundedRectangle(cornerRadius: 16)
+                    .fill(AppColors.cardBackground)
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+            )
+        }
+        .buttonStyle(.plain)
     }
 
     private var avatarSection: some View {

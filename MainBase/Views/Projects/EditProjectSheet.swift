@@ -10,7 +10,6 @@ struct EditProjectSheet: View {
     @State private var projectLead: String
     @State private var teamMembers: Set<String>
     @State private var selectedMainId: String
-    @State private var selectedLabel: ProjectLabel
     @State private var selectedSublabels: Set<String>
     @State private var budgetText: String
     @State private var isSaving = false
@@ -24,7 +23,6 @@ struct EditProjectSheet: View {
         _projectLead = State(initialValue: project.projectLead)
         _teamMembers = State(initialValue: Set(project.teamMembers))
         _selectedMainId = State(initialValue: project.projectMainId ?? "")
-        _selectedLabel = State(initialValue: project.label ?? .marketing)
         _selectedSublabels = State(initialValue: Set(project.sublabels))
         _budgetText = State(initialValue: project.budget.map { String($0) } ?? "")
     }
@@ -64,7 +62,6 @@ struct EditProjectSheet: View {
                     ProjectCategoryPicker(
                         projectMains: vm.projectMains,
                         selectedMainId: $selectedMainId,
-                        selectedLabel: $selectedLabel,
                         selectedSublabels: $selectedSublabels
                     )
 
@@ -108,7 +105,6 @@ struct EditProjectSheet: View {
             projectLead: projectLead,
             teamMembers: Array(teamMembers),
             projectMainId: selectedMainId,
-            label: selectedLabel,
             sublabels: Array(selectedSublabels),
             budget: Double(budgetText)
         )
