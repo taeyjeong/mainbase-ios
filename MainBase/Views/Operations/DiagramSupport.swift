@@ -57,6 +57,46 @@ struct DiagramConnector {
         CGPoint(x: tip.x - distance * cos(tipAngle),
                 y: tip.y - distance * sin(tipAngle))
     }
+
+    /// An organic curve that bows sideways relative to the line it connects, rather than the
+    /// strictly top-to-bottom or left-to-right S-curve of `init(from:to:axis:)`. Used by the mind
+    /// map, whose branches radiate outward in every direction, so a single fixed axis can't tell
+    /// which way each curve should bow.
+    init(radialFrom start: CGPoint, to end: CGPoint, bow: CGFloat = 0.2) {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let length = max(hypot(dx, dy), 0.001)
+        let mid = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+        let control = CGPoint(x: mid.x - dy / length * length * bow,
+                              y: mid.y + dx / length * length * bow)
+        var path = Path()
+        path.move(to: start)
+        path.addQuadCurve(to: end, control: control)
+        self.path = path
+        self.tip = end
+        self.tipAngle = atan2(end.y - control.y, end.x - control.x)
+    }
+}
+
+/// Places points evenly around a circle or ellipse — used to lay out nodes with no inherent
+/// hierarchy (a peer network) or the branches/leaves of a radial mind map.
+enum RadialLayout {
+    static func angles(count: Int, startAngle: CGFloat, angleSpan: CGFloat = 2 * .pi,
+                       closed: Bool = true) -> [CGFloat] {
+        guard count > 0 else { return [] }
+        if count == 1 {
+            return [closed ? startAngle : startAngle + angleSpan / 2]
+        }
+        let divisor = CGFloat(closed ? count : count - 1)
+        return (0..<count).map { startAngle + angleSpan * CGFloat($0) / divisor }
+    }
+
+    /// With independent X/Y radii — used to squash a ring or radial fan into a
+    /// vertically-elongated oval (taller than wide) instead of a perfect circle, so diagrams read
+    /// top-to-bottom on a phone rather than spreading equally in every direction.
+    static func pointOnEllipse(center: CGPoint, radiusX: CGFloat, radiusY: CGFloat, angle: CGFloat) -> CGPoint {
+        CGPoint(x: center.x + radiusX * cos(angle), y: center.y + radiusY * sin(angle))
+    }
 }
 
 /// Wraps a fixed-size diagram canvas in a scrollable, pinch-zoomable container with a small

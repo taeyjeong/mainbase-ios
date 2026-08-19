@@ -19,6 +19,7 @@ struct ProjectDetailView: View {
     @State private var now = Date()
     @State private var showingGallery = false
     @State private var showingChat = false
+    @State private var showingAddDiagram = false
     @Environment(\.colorScheme) private var colorScheme
 
     private let clockTimer = Timer.publish(every: 60, on: .main, in: .common).autoconnect()
@@ -153,6 +154,7 @@ struct ProjectDetailView: View {
                 }
             }
 
+            ProjectDiagramsSection(showingAddDiagram: $showingAddDiagram)
         }
         .listStyle(.plain)
         .overlay(alignment: .bottomTrailing) {
@@ -192,6 +194,9 @@ struct ProjectDetailView: View {
         }
         .sheet(isPresented: $showingGallery) {
             ProjectPhotoGalleryView(projectId: project.id, vm: vm)
+        }
+        .sheet(isPresented: $showingAddDiagram) {
+            AddDiagramFlowSheet()
         }
         .alert("Error", isPresented: Binding(get: { errorMessage != nil }, set: { if !$0 { errorMessage = nil } })) {
             Button("OK", role: .cancel) { errorMessage = nil }

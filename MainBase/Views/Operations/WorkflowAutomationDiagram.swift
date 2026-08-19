@@ -9,17 +9,15 @@ struct WorkflowAutomationDiagram: View {
 
     private let canvasSize = CGSize(width: 380, height: 590)
     private let lineColor = AppColors.textSecondary.opacity(0.55)
+    @State private var zoom: CGFloat = 1
 
     private func node(_ id: String) -> WorkflowNode { nodes.first { $0.id == id }! }
 
     var body: some View {
-        ScrollView([.horizontal, .vertical], showsIndicators: false) {
-            VStack(alignment: .leading, spacing: 16) {
-                heading
-                legend
-                diagram
-            }
-            .padding(20)
+        VStack(alignment: .leading, spacing: 16) {
+            heading.padding([.horizontal, .top], 20)
+            legend.padding(.horizontal, 20)
+            diagram.zoomableCanvas(zoom: $zoom, canvasSize: canvasSize)
         }
     }
 
