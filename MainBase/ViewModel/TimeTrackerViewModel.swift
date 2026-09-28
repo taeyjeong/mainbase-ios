@@ -18,6 +18,10 @@ final class TimeTrackerViewModel: ObservableObject {
     private let db = Firestore.firestore()
     private var listener: ListenerRegistration?
     private var autoStopTimer: Timer?
+    private var lastClockOut: Date?
+    /// The admin-set schedule, if any. Sessions inside a scheduled shift are clocked out by the
+    /// enforceClockSchedules Cloud Function instead of the 8-hour cap.
+    private var terms: EmploymentTerms?
 
     private var userId: String? { Auth.auth().currentUser?.uid }
 
@@ -29,14 +33,24 @@ final class TimeTrackerViewModel: ObservableObject {
             let online = data["isOnline"] as? Bool ?? false
             let ts = data["clockInTime"] as? Timestamp
             let admin = data["admin"] as? Bool ?? false
+            let lastClockOut = (data["lastClockOut"] as? Timestamp)?.dateValue()
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.isClockedIn = online
                 self.clockInTime = ts?.dateValue()
                 self.isAdmin = admin
+                self.lastClockOut = lastClockOut
             }
         }
         startAutoStopTimer()
+        Task { await loadTerms() }
+    }
+
+    private func loadTerms() async {
+        guard let uid = userId else { return }
+        let snapshot = try? await db.collection("users").document(uid)
+            .collection("employment").document("terms").getDocument()
+        terms = snapshot?.data().map(EmploymentTerms.init(data:))
     }
 
     func stopListening() {
@@ -57,6 +71,7 @@ final class TimeTrackerViewModel: ObservableObject {
 
     private func autoClockOutIfNeeded() async {
         guard isClockedIn, !isSaving, let start = clockInTime else { return }
+        guard terms?.shift(containingClockIn: start) == nil else { return }
         guard Date().timeIntervalSince(start) >= Self.maxSessionDuration else { return }
         await clockOut(report: Self.autoClockOutReport)
     }
@@ -72,13 +87,25 @@ final class TimeTrackerViewModel: ObservableObject {
     func clockIn() async {
         guard let uid = userId else { return }
         isSaving = true
-        let now = Date()
+        await loadTerms()
+        let clockInAt = scheduledClockInTime(for: Date())
         try? await db.collection("users").document(uid).setData([
             "isOnline": true,
-            "clockInTime": Timestamp(date: now)
+            "clockInTime": Timestamp(date: clockInAt)
         ], merge: true)
         await notifyClockEvent(action: .clockIn)
         isSaving = false
+    }
+
+    /// Clocking in up to 30 minutes after the scheduled start records the scheduled start,
+    /// unless part of this shift was already worked (clocked out after it started).
+    private func scheduledClockInTime(for now: Date) -> Date {
+        guard let shift = terms?.shift(on: now),
+              now >= shift.start,
+              now.timeIntervalSince(shift.start) <= EmploymentTerms.clockInSnapWindow,
+              (lastClockOut ?? .distantPast) < shift.start
+        else { return now }
+        return shift.start
     }
 
     func clockOut(report: String) async {

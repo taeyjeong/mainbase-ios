@@ -3,7 +3,9 @@ const { getMessaging } = require("firebase-admin/messaging");
 const { getFirestore, FieldValue } = require("firebase-admin/firestore");
 const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/firestore");
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
+const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { logger } = require("firebase-functions");
+const { recentShifts } = require("./scheduleTime");
 
 initializeApp();
 
@@ -17,6 +19,7 @@ const NOTIFICATION_TYPES = Object.freeze({
   SUBTASK_COMPLETED: "subtask_completed",
   CHAT_MESSAGE: "chat_message",
   REPORT_MESSAGE: "report_message",
+  SCHEDULE_REMINDER: "schedule_reminder",
 });
 
 // Mirrors the ClockAction enum in MainBase/Models/NotificationType.swift.
@@ -334,7 +337,13 @@ exports.createClockEventNotification = onCall(async (request) => {
   }
 
   const reportText = typeof report === "string" ? report.trim() : "";
+  return fanOutClockEvent({ actorUserId, action, reportText });
+});
 
+// Writes a "Clock Update" notification to everyone who should hear about actorUserId's
+// clock event. Shared by the client-called createClockEventNotification and the scheduled
+// automatic clock-out in enforceClockSchedules.
+async function fanOutClockEvent({ actorUserId, action, reportText }) {
   const db = getFirestore();
   const actorSnap = await db.collection("users").doc(actorUserId).get();
   const actorData = actorSnap.exists ? actorSnap.data() || {} : {};
@@ -399,7 +408,7 @@ exports.createClockEventNotification = onCall(async (request) => {
     notificationCount: notificationRefs.length,
     notificationIds: notificationRefs.map((ref) => ref.id),
   };
-});
+}
 
 exports.setEmployeeStatus = onCall(async (request) => {
   if (!request.auth?.uid) {
@@ -441,6 +450,166 @@ exports.setEmployeeStatus = onCall(async (request) => {
   });
 
   return { success: true };
+});
+
+// ---------------- scheduled clock enforcement ----------------
+// Timing is measured from the admin-set schedule (users/{uid}/employment/terms), always in US
+// Pacific time (SCHEDULE_TIME_ZONE in scheduleTime.js). The app
+// separately snaps a clock-in made within 30 minutes of the scheduled start back to the
+// start (TimeTrackerViewModel.clockIn).
+const CLOCK_IN_REMINDER_DELAY_MS = 15 * 60 * 1000; // after scheduled start
+const CLOCK_OUT_REMINDER_DELAY_MS = 30 * 60 * 1000; // after scheduled end
+const AUTO_CLOCK_OUT_DELAY_MS = 90 * 60 * 1000; // after scheduled end (1h after the reminder)
+// A session only counts toward a shift if it started no earlier than this before the shift's
+// start, so an evening or stale session isn't credited up to the next shift's end. Mirrors
+// EmploymentTerms.earlyClockInAllowance in the app, which leaves other sessions to the 8-hour cap.
+const EARLY_CLOCK_IN_ALLOWANCE_MS = 4 * 60 * 60 * 1000;
+const AUTO_CLOCK_OUT_REPORT = "Automatically clocked out at scheduled end time (no report written).";
+
+function formatDuration(ms) {
+  const totalMinutes = Math.floor(ms / 60000);
+  return `${Math.floor(totalMinutes / 60)}h ${totalMinutes % 60}m`;
+}
+
+async function sendScheduleReminder(userId, action, body) {
+  await notifyUser({
+    recipientUserId: userId,
+    type: NOTIFICATION_TYPES.SCHEDULE_REMINDER,
+    title: "Clock Reminder",
+    body,
+    action,
+  });
+}
+
+// Clocks the user out as of `clockOutAt`, mirroring TimeTrackerViewModel.clockOut. Runs in a
+// transaction so it no-ops if the user clocked out (or back in) since we read their doc.
+// Returns true if this call did the clock-out.
+async function autoClockOut(userId, expectedClockIn, clockOutAt) {
+  const db = getFirestore();
+  const userRef = db.collection("users").doc(userId);
+
+  const didClockOut = await db.runTransaction(async (tx) => {
+    const snap = await tx.get(userRef);
+    const data = snap.data() || {};
+    const currentClockIn = data.clockInTime?.toDate?.();
+    if (data.isOnline !== true || !currentClockIn || currentClockIn.getTime() !== expectedClockIn.getTime()) {
+      return false;
+    }
+
+    const durationMs = clockOutAt.getTime() - expectedClockIn.getTime();
+    tx.update(userRef, {
+      isOnline: false,
+      clockInTime: FieldValue.delete(),
+      lastClockOut: clockOutAt,
+    });
+    tx.set(userRef.collection("history").doc(), {
+      clockIn: expectedClockIn,
+      clockOut: clockOutAt,
+      durationMs,
+      durationFormatted: formatDuration(durationMs),
+      report: AUTO_CLOCK_OUT_REPORT,
+      autoClockedOut: true,
+      createdAt: new Date(),
+    });
+    tx.set(userRef.collection("reports").doc(), {
+      reportText: AUTO_CLOCK_OUT_REPORT,
+      timestamp: clockOutAt,
+    });
+    return true;
+  });
+
+  if (didClockOut) {
+    await fanOutClockEvent({ actorUserId: userId, action: CLOCK_ACTIONS.CLOCK_OUT, reportText: AUTO_CLOCK_OUT_REPORT });
+  }
+  return didClockOut;
+}
+
+async function enforceScheduleForUser(userId, userData, terms, state, now) {
+  const stateUpdate = {};
+  const nowMs = now.getTime();
+  const clockIn = userData.clockInTime?.toDate?.() || null;
+  const lastClockOut = userData.lastClockOut?.toDate?.() || null;
+
+  for (const shift of recentShifts(terms, now)) {
+    const startMs = shift.start.getTime();
+    const endMs = shift.end.getTime();
+
+    // Still clocked in past the end of this shift.
+    const sessionBelongsToShift =
+      userData.isOnline === true &&
+      clockIn &&
+      clockIn.getTime() >= startMs - EARLY_CLOCK_IN_ALLOWANCE_MS &&
+      clockIn.getTime() < endMs;
+    if (sessionBelongsToShift) {
+      if (nowMs >= endMs + AUTO_CLOCK_OUT_DELAY_MS) {
+        const didClockOut = await autoClockOut(userId, clockIn, shift.end);
+        if (didClockOut) logger.info("Auto clocked out at scheduled end", { userId, shift: shift.key });
+        break; // The session is over; later shifts see stale userData.
+      }
+      if (nowMs >= endMs + CLOCK_OUT_REMINDER_DELAY_MS && state.clockOutReminderShift !== shift.key) {
+        await sendScheduleReminder(userId, CLOCK_ACTIONS.CLOCK_OUT, "Did you forget to clock out and write your report?");
+        stateUpdate.clockOutReminderShift = shift.key;
+      }
+    }
+
+    // Not clocked in 15 minutes after the start, and hasn't already worked part of this shift.
+    const workedThisShift = userData.isOnline === true || (lastClockOut && lastClockOut.getTime() >= startMs);
+    if (
+      !workedThisShift &&
+      nowMs >= startMs + CLOCK_IN_REMINDER_DELAY_MS &&
+      nowMs < endMs &&
+      state.clockInReminderShift !== shift.key
+    ) {
+      await sendScheduleReminder(userId, CLOCK_ACTIONS.CLOCK_IN, "Did you forget to clock in?");
+      stateUpdate.clockInReminderShift = shift.key;
+    }
+  }
+
+  if (Object.keys(stateUpdate).length > 0) {
+    await getFirestore()
+      .collection("users")
+      .doc(userId)
+      .collection("employment")
+      .doc("scheduleState")
+      .set({ ...stateUpdate, updatedAt: now }, { merge: true });
+  }
+}
+
+// Every 5 minutes: remind scheduled employees who haven't clocked in/out, and clock out anyone
+// still clocked in 90 minutes past their scheduled end (recorded at the scheduled end time).
+exports.enforceClockSchedules = onSchedule("every 5 minutes", async () => {
+  const db = getFirestore();
+  const now = new Date();
+  const employmentSnap = await db.collectionGroup("employment").get();
+
+  const termsByUser = new Map();
+  const stateByUser = new Map();
+  employmentSnap.docs.forEach((doc) => {
+    const userId = doc.ref.parent.parent?.id;
+    if (!userId) return;
+    if (doc.id === "terms") termsByUser.set(userId, doc.data() || {});
+    if (doc.id === "scheduleState") stateByUser.set(userId, doc.data() || {});
+  });
+
+  const userIds = [...termsByUser.keys()];
+  if (userIds.length === 0) return;
+
+  const userSnaps = await db.getAll(...userIds.map((userId) => db.collection("users").doc(userId)));
+  for (const userSnap of userSnaps) {
+    const userData = userSnap.data();
+    if (!userData || userData.isEmployed !== true) continue;
+    try {
+      await enforceScheduleForUser(
+        userSnap.id,
+        userData,
+        termsByUser.get(userSnap.id),
+        stateByUser.get(userSnap.id) || {},
+        now
+      );
+    } catch (error) {
+      logger.error("Schedule enforcement failed for user", { userId: userSnap.id, error: error.message });
+    }
+  }
 });
 
 // Fires when a task's assigneeEmail is set or changed. Notifies only the

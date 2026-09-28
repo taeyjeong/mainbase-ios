@@ -21,6 +21,11 @@ service cloud.firestore {
         && currentUser().admin == true;
     }
 
+    function isSameCompanyAdmin(userId) {
+      return isAdmin()
+        && get(/databases/$(database)/documents/users/$(userId)).data.company == currentUser().company;
+    }
+
     // ---------------- users ----------------
     match /users/{userId} {
       // Emails/admin flags/team rosters are read across the app (assignee pickers,
@@ -47,6 +52,30 @@ service cloud.firestore {
         // Notifications are written by the createClockEventNotification Cloud
         // Function using the Admin SDK, which bypasses rules entirely.
         allow create, delete: if false;
+      }
+
+      // Pay type/rate and weekly schedule (doc id "terms"). Kept off the user doc, which
+      // every signed-in user can read and its owner can write. Only an admin in the
+      // employee's company may set it; the employee may read their own.
+      match /employment/{docId} {
+        allow read: if isOwner(userId) || isSameCompanyAdmin(userId);
+        allow write: if isSameCompanyAdmin(userId);
+      }
+
+      // Monthly payouts an admin has marked paid (doc id "yyyy-MM"), with the hours, rate and
+      // amount frozen at that time. Same access as employment terms.
+      // TODO (not implemented yet): the employee can also mark as paid. That needs an owner
+      // write here, limited to the paid fields so they can't change the hours/rate/amount.
+      match /payouts/{monthId} {
+        allow read: if isOwner(userId) || isSameCompanyAdmin(userId);
+        allow write: if isSameCompanyAdmin(userId);
+      }
+
+      // Wage log (doc id "yyyy-MM" = month the wage starts). Admin-only writes; the employee
+      // may read their own. See WageHistory in MainBase/Models/WageChange.swift for the rules.
+      match /wageHistory/{monthId} {
+        allow read: if isOwner(userId) || isSameCompanyAdmin(userId);
+        allow write: if isSameCompanyAdmin(userId);
       }
 
       match /history/{historyId} {

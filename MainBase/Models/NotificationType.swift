@@ -10,6 +10,7 @@ enum NotificationType: String {
     case subtaskCompleted = "subtask_completed"
     case chatMessage = "chat_message"
     case reportMessage = "report_message"
+    case scheduleReminder = "schedule_reminder"
 }
 
 /// Mirrors the CLOCK_ACTIONS map in functions/index.js. Keep both in sync.

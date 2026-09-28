@@ -59,4 +59,20 @@ final class ProfileViewModel: ObservableObject {
             }
         }
     }
+
+    /// Persists only the clock notification preference, so changing it from AdminToolsView
+    /// doesn't also save unsaved edits on the Profile screen.
+    func saveClockNotificationPreference() {
+        guard let uid = Auth.auth().currentUser?.uid else { return }
+        db.collection("users").document(uid).updateData([
+            "clockNotificationPreference": profile.clockNotificationPreference.rawValue,
+        ]) { [weak self] error in
+            guard let error else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.alertMessage = error.localizedDescription
+                self.showAlert = true
+            }
+        }
+    }
 }

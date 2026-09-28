@@ -63,6 +63,8 @@ struct WorkNotificationCard: View {
             return AppColors.primary
         case .chatMessage, .reportMessage:
             return AppColors.primary
+        case .scheduleReminder:
+            return .orange
         case nil:
             return AppColors.textSecondary.opacity(0.4)
         }
@@ -80,6 +82,8 @@ struct WorkNotificationCard: View {
             return "checkmark.circle.fill"
         case .chatMessage, .reportMessage:
             return "bubble.left.fill"
+        case .scheduleReminder:
+            return "alarm.fill"
         case nil:
             return "bell.fill"
         }

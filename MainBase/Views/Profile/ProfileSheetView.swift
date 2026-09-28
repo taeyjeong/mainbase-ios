@@ -4,15 +4,10 @@ struct ProfileSheetView: View {
     @Environment(\.dismiss) private var dismiss
     @EnvironmentObject private var authVM: AuthViewModel
     @StateObject private var vm = ProfileViewModel()
-    @StateObject private var historyVM = HistoryViewModel()
-    @StateObject private var adminVM = AdminEmployeesViewModel()
-    @StateObject private var projectsVM = ProjectsViewModel()
 
     @State private var showSignOutConfirm = false
-    @State private var selectedHistoryUserId: String?
     @State private var isEditingEmoji = false
     @State private var showFlowMap = false
-    @State private var showArchivedProjects = false
     @AppStorage("appearancePreference") private var appearancePreference = AppearancePreference.system.rawValue
 
     var body: some View {
@@ -28,13 +23,10 @@ struct ProfileSheetView: View {
                             infoCard
                             appearanceSection
                             flowMapButton
+                            historyButton
                             if vm.profile.admin {
-                                clockNotificationSection
-                                adminSection
-                                archivedProjectsButton
-                                ManageProjectMainsView()
+                                adminToolsButton
                             }
-                            historySection
                             saveButton
                             signOutButton
                         }
@@ -57,31 +49,11 @@ struct ProfileSheetView: View {
         }
         .onAppear {
             vm.loadProfile()
-            historyVM.startListening()
-        }
-        .onDisappear {
-            historyVM.stopListening()
-            adminVM.stopListening()
-        }
-        .onChange(of: vm.isLoading) { _, isLoading in
-            guard !isLoading, vm.profile.admin else { return }
-            adminVM.startListening(company: vm.profile.company)
-        }
-        .onChange(of: selectedHistoryUserId) { _, userId in
-            historyVM.startListening(userId: userId)
         }
         .alert("Profile", isPresented: $vm.showAlert) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(vm.alertMessage)
-        }
-        .alert("Employees", isPresented: Binding(
-            get: { adminVM.errorMessage != nil },
-            set: { if !$0 { adminVM.errorMessage = nil } }
-        )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(adminVM.errorMessage ?? "")
         }
         .confirmationDialog("Sign out of your account?", isPresented: $showSignOutConfirm, titleVisibility: .visible) {
             Button("Sign Out", role: .destructive) { authVM.signOut() }
@@ -90,37 +62,29 @@ struct ProfileSheetView: View {
         .sheet(isPresented: $showFlowMap) {
             AppFlowMapView()
         }
-        .sheet(isPresented: $showArchivedProjects) {
-            ArchivedProjectsView(vm: projectsVM)
-        }
     }
 
-    private var archivedProjectsButton: some View {
-        Button {
-            showArchivedProjects = true
+    private var adminToolsButton: some View {
+        NavigationLink {
+            AdminToolsView(profileVM: vm)
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "archivebox")
-                    .font(.system(size: 18))
-                    .foregroundColor(AppColors.primary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Archived Projects")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(AppColors.text)
-                    Text("View and restore archived projects")
-                        .font(.system(size: 12))
-                        .foregroundColor(AppColors.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(AppColors.textSecondary)
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(AppColors.cardBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+            ProfileNavRow(
+                icon: "person.badge.key",
+                title: "Admin Tools",
+                subtitle: "Employees, notifications, projects and mains"
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var historyButton: some View {
+        NavigationLink {
+            HistoryView()
+        } label: {
+            ProfileNavRow(
+                icon: "clock.arrow.circlepath",
+                title: "History",
+                subtitle: "Your past clock-outs and reports"
             )
         }
         .buttonStyle(.plain)
@@ -259,28 +223,10 @@ struct ProfileSheetView: View {
         Button {
             showFlowMap = true
         } label: {
-            HStack(spacing: 12) {
-                Image(systemName: "map")
-                    .font(.system(size: 18))
-                    .foregroundColor(AppColors.primary)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("App Flow Map")
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(AppColors.text)
-                    Text("See how every screen connects")
-                        .font(.system(size: 12))
-                        .foregroundColor(AppColors.textSecondary)
-                }
-                Spacer()
-                Image(systemName: "chevron.right")
-                    .font(.system(size: 14, weight: .semibold))
-                    .foregroundColor(AppColors.textSecondary)
-            }
-            .padding(16)
-            .background(
-                RoundedRectangle(cornerRadius: 16)
-                    .fill(AppColors.cardBackground)
-                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+            ProfileNavRow(
+                icon: "map",
+                title: "App Flow Map",
+                subtitle: "See how every screen connects"
             )
         }
         .buttonStyle(.plain)
@@ -298,135 +244,6 @@ struct ProfileSheetView: View {
                 Text("Dark").tag(AppearancePreference.dark.rawValue)
             }
             .pickerStyle(.segmented)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(AppColors.cardBackground)
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
-        )
-    }
-
-    private var clockNotificationSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Clock Notifications")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(AppColors.text)
-
-            Picker("Clock Notifications", selection: $vm.profile.clockNotificationPreference) {
-                ForEach(ClockNotificationPreference.allCases, id: \.self) { preference in
-                    Text(preference.displayName).tag(preference)
-                }
-            }
-            .pickerStyle(.segmented)
-
-            Text("As an admin, choose whether you hear about every coworker clock-in/out, or none at all — regardless of your own clock status.")
-                .font(.system(size: 12))
-                .foregroundColor(AppColors.textSecondary)
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(AppColors.cardBackground)
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
-        )
-    }
-
-    private var adminSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Employees")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(AppColors.text)
-                .padding(.bottom, 16)
-
-            if adminVM.isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-            } else if adminVM.employees.isEmpty {
-                Text("No employees found.")
-                    .font(.system(size: 14))
-                    .foregroundColor(AppColors.textSecondary)
-            } else {
-                ForEach(Array(adminVM.employees.enumerated()), id: \.element.id) { index, employee in
-                    if index > 0 {
-                        Divider()
-                            .padding(.vertical, 8)
-                    }
-                    HStack {
-                        Text(employee.name)
-                            .font(.system(size: 14, weight: .medium))
-                            .foregroundColor(AppColors.text)
-                        Spacer()
-                        Toggle("", isOn: Binding(
-                            get: { employee.isEmployed },
-                            set: { adminVM.setEmployed($0, for: employee.id) }
-                        ))
-                        .labelsHidden()
-                        .tint(AppColors.primary)
-                    }
-                }
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(AppColors.cardBackground)
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
-        )
-    }
-
-    private var historySection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("History")
-                    .font(.system(size: 16, weight: .semibold))
-                    .foregroundColor(AppColors.text)
-
-                if vm.profile.admin {
-                    Spacer()
-                    Picker("View history for", selection: $selectedHistoryUserId) {
-                        Text("Me").tag(String?.none)
-                        ForEach(adminVM.employees) { employee in
-                            Text(employee.name).tag(Optional(employee.id))
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(AppColors.primary)
-                }
-            }
-            .padding(.bottom, 16)
-
-            if historyVM.isLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 24)
-            } else if historyVM.sections.isEmpty {
-                Text("No clock-out history yet.")
-                    .font(.system(size: 14))
-                    .foregroundColor(AppColors.textSecondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            } else {
-                ForEach(Array(historyVM.sections.enumerated()), id: \.offset) { index, section in
-                    if index > 0 {
-                        Divider()
-                            .padding(.vertical, 12)
-                    }
-
-                    Text(section.title)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundColor(AppColors.textSecondary)
-                        .padding(.bottom, 8)
-
-                    ForEach(section.items) { entry in
-                        HistoryRow(entry: entry)
-                        if entry.id != section.items.last?.id {
-                            Divider()
-                                .padding(.vertical, 8)
-                        }
-                    }
-                }
-            }
         }
         .padding(16)
         .background(
@@ -476,35 +293,37 @@ struct ProfileSheetView: View {
     }
 }
 
-private struct HistoryRow: View {
-    let entry: HistoryEntry
-
-    private static let dateFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter
-    }()
+/// Card-style "icon, title, subtitle, chevron" row used for the navigation buttons on
+/// ProfileSheetView and AdminToolsView.
+struct ProfileNavRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text(Self.dateFormatter.string(from: entry.clockOut))
-                    .font(.system(size: 13, weight: .medium))
+        HStack(spacing: 12) {
+            Image(systemName: icon)
+                .font(.system(size: 18))
+                .foregroundColor(AppColors.primary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.system(size: 16, weight: .semibold))
                     .foregroundColor(AppColors.text)
-                Spacer()
-                Text(entry.durationFormatted)
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundColor(AppColors.primary)
-            }
-
-            if !entry.report.isEmpty {
-                Text(entry.report)
-                    .font(.system(size: 13))
+                Text(subtitle)
+                    .font(.system(size: 12))
                     .foregroundColor(AppColors.textSecondary)
-                    .fixedSize(horizontal: false, vertical: true)
             }
+            Spacer()
+            Image(systemName: "chevron.right")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundColor(AppColors.textSecondary)
         }
+        .padding(16)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(AppColors.cardBackground)
+                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
+        )
     }
 }
 

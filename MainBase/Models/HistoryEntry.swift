@@ -6,4 +6,6 @@ struct HistoryEntry: Identifiable {
     let clockOut: Date
     let durationFormatted: String
     let report: String
+
+    var hours: Double { clockOut.timeIntervalSince(clockIn) / 3600 }
 }
