@@ -4,23 +4,44 @@ import SwiftUI
 /// hours worked per day and, for hourly pay, what each day earned at the record's rate (the
 /// frozen rate for a paid month, the wage in effect that month for an estimate), plus any
 /// bonus, deduction and note added when it was marked paid. Tapping a day shows that day's
-/// shifts (clock in/out, hours) and the report written for each. Days are Pacific days, and a
-/// session counts toward the day it was clocked out on, matching the month totals.
+/// shifts (clock in/out, hours) and the report written for each; in an unpaid month, a shift's
+/// times can be corrected (EditShiftSheet). Days are Pacific days, and a session counts toward
+/// the day it was clocked out on, matching the month totals; shift times are shown in the
+/// viewer's own time zone.
 struct PayoutMonthCalendarView: View {
-    let record: PayoutRecord
-    let entriesByDay: [String: [HistoryEntry]]
+    let monthKey: String
+    let wages: WageHistory
+    @ObservedObject var payoutsVM: EmployeePayoutsViewModel
 
     /// "yyyy-MM-dd" of the tapped day.
     @State private var selectedDayKey: String?
+    @State private var shiftToEdit: HistoryEntry?
+
+    private var record: PayoutRecord {
+        payoutsVM.record(forMonth: monthKey, using: wages)
+    }
+
+    private var entriesByDay: [String: [HistoryEntry]] {
+        payoutsVM.entriesByDay
+    }
 
     private static let dayDetailID = "dayDetail"
 
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        formatter.timeZone = PayoutRecord.calendar.timeZone
         formatter.timeStyle = .short
         return formatter
     }()
+
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.setLocalizedDateFormatFromTemplate("MMMd")
+        return formatter
+    }()
+
+    private static var localZoneAbbreviation: String {
+        TimeZone.current.abbreviation() ?? TimeZone.current.identifier
+    }
 
     private static let dayTitleFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -78,6 +99,9 @@ struct PayoutMonthCalendarView: View {
         .background(AppColors.background.ignoresSafeArea())
         .navigationTitle(record.monthTitle)
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(item: $shiftToEdit) { entry in
+            EditShiftSheet(entry: entry, payoutsVM: payoutsVM)
+        }
     }
 
     private var summaryCard: some View {
@@ -148,7 +172,7 @@ struct PayoutMonthCalendarView: View {
                 }
             }
 
-            Text("Pacific Time (US). Hours count toward the day the shift was clocked out. Tap a day for its shifts and reports.")
+            Text("Days follow Pacific Time (US), and hours count toward the day the shift was clocked out. Shift times are in your time zone (\(Self.localZoneAbbreviation)). Tap a day for its shifts and reports.")
                 .font(.system(size: 12))
                 .foregroundColor(AppColors.textSecondary)
         }
@@ -234,7 +258,12 @@ struct PayoutMonthCalendarView: View {
                 } else {
                     ForEach(Array(entries.enumerated()), id: \.element.id) { index, entry in
                         if index > 0 { Divider() }
-                        shiftRow(entry)
+                        shiftRow(entry, dayKey: key)
+                    }
+                    if record.isPaid {
+                        Text("This month is marked paid. Mark it unpaid to change its shifts.")
+                            .font(.system(size: 12))
+                            .foregroundColor(AppColors.textSecondary)
                     }
                 }
             }
@@ -248,16 +277,41 @@ struct PayoutMonthCalendarView: View {
         }
     }
 
-    private func shiftRow(_ entry: HistoryEntry) -> some View {
+    /// A time in the viewer's zone, prefixed with its local date when that isn't the Pacific
+    /// day the shift is listed under (e.g. a viewer in Korea, or an overnight shift).
+    private func timeText(_ date: Date, dayKey: String) -> String {
+        let time = Self.timeFormatter.string(from: date)
+        let local = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        let localKey = String(format: "%04d-%02d-%02d", local.year ?? 0, local.month ?? 0, local.day ?? 0)
+        return localKey == dayKey ? time : "\(Self.shortDateFormatter.string(from: date)), \(time)"
+    }
+
+    private func shiftRow(_ entry: HistoryEntry, dayKey: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("\(Self.timeFormatter.string(from: entry.clockIn)) – \(Self.timeFormatter.string(from: entry.clockOut)) PT")
+                Text("\(timeText(entry.clockIn, dayKey: dayKey)) – \(timeText(entry.clockOut, dayKey: dayKey)) \(Self.localZoneAbbreviation)")
                     .font(.system(size: 13, weight: .medium))
                     .foregroundColor(AppColors.text)
                 Spacer()
                 Text(entry.durationFormatted)
                     .font(.system(size: 12, weight: .medium))
                     .foregroundColor(AppColors.primary)
+                if !record.isPaid {
+                    Button {
+                        shiftToEdit = entry
+                    } label: {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundColor(AppColors.primary)
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Edit clock-in and clock-out")
+                }
+            }
+            if entry.editedAt != nil {
+                Text("Times edited by an admin")
+                    .font(.system(size: 11))
+                    .foregroundColor(AppColors.textSecondary)
             }
             Text("Report")
                 .font(.system(size: 12, weight: .semibold))

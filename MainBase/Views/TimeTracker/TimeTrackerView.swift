@@ -9,6 +9,7 @@ struct TimeTrackerView: View {
     @EnvironmentObject private var vm: TimeTrackerViewModel
     @StateObject private var teamVM = TeamMemberViewModel()
     @StateObject private var projectsVM = ProjectsViewModel()
+    @StateObject private var summaryVM = MonthlySummaryViewModel()
 
     @State private var timerDisplay = "00:00:00"
     @State private var showingProfile = false
@@ -21,25 +22,34 @@ struct TimeTrackerView: View {
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-                .padding(.horizontal, 20)
-                .padding(.top, 8)
-                .padding(.bottom, 16)
-                .background(AppColors.background)
+        ZStack {
+            VStack(spacing: 0) {
+                topBar
+                    .padding(.horizontal, 20)
+                    .padding(.top, 8)
+                    .padding(.bottom, 16)
+                    .background(AppColors.background)
 
-            ScrollView(showsIndicators: false) {
-                VStack(spacing: 24) {
-                    clockCard
-                    if vm.isAdmin || vm.isClockedIn {
-                        TeamMembersSection(members: teamVM.members, isLoading: teamVM.isLoading)
+                ScrollView(showsIndicators: false) {
+                    VStack(spacing: 24) {
+                        clockCard
+                        if vm.isAdmin || vm.isClockedIn {
+                            TeamMembersSection(members: teamVM.members, isLoading: teamVM.isLoading)
+                        }
+                        ReportsListView(onSummarizeMonth: { summaryVM.present(month: $0) })
                     }
-                    ReportsListView()
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 40)
                 }
-                .padding(.horizontal, 20)
-                .padding(.bottom, 40)
+            }
+
+            if summaryVM.isPresented {
+                MonthlySummaryPopup(vm: summaryVM)
+                    .transition(.opacity)
+                    .zIndex(1)
             }
         }
+        .animation(.easeInOut(duration: 0.2), value: summaryVM.isPresented)
         .background(AppColors.background.ignoresSafeArea())
         .onAppear {
             teamVM.startListening()

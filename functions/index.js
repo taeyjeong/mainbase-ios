@@ -5,7 +5,7 @@ const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { logger } = require("firebase-functions");
-const { recentShifts } = require("./scheduleTime");
+const { recentShifts, SCHEDULE_TIME_ZONE } = require("./scheduleTime");
 
 initializeApp();
 
@@ -450,6 +450,172 @@ exports.setEmployeeStatus = onCall(async (request) => {
   });
 
   return { success: true };
+});
+
+// ---------------- Gemini prompt ----------------
+// The API key is read from functions/.env (GEMINI_API_KEY=...), which is gitignored and loaded by
+// the Firebase CLI at deploy time, so it never ships inside the app binary or lands in git.
+// Models are tried in order, moving to the next only when one answers 503 (overloaded). Flash-lite
+// is first because it answers in ~2s and has stayed available while the full Flash models were
+// frequently overloaded; "gemini-flash-latest" is the fallback. If Google retires a model, the
+// error log names its replacement.
+const GEMINI_MODELS = ["gemini-3.5-flash-lite", "gemini-flash-latest"];
+const GEMINI_MAX_PROMPT_LENGTH = 8000;
+
+// Cap on the clock-out reports text fed into one monthly summary, to bound cost and latency.
+const SUMMARY_MAX_REPORTS_LENGTH = 30000;
+const MAX_MONTH_RANGE_MS = 32 * 24 * 60 * 60 * 1000;
+
+// Sends one prompt to Gemini and returns its text, trying GEMINI_MODELS in order. Throws an
+// HttpsError the app can show as-is.
+async function generateWithGemini(prompt, uid) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    logger.error("GEMINI_API_KEY is not set. Add it to functions/.env and redeploy.");
+    throw new HttpsError("failed-precondition", "Gemini is not configured.");
+  }
+
+  const callGemini = (model) =>
+    fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-goog-api-key": apiKey,
+      },
+      body: JSON.stringify({ contents: [{ role: "user", parts: [{ text: prompt }] }] }),
+    });
+
+  let response;
+  let model;
+  for (model of GEMINI_MODELS) {
+    response = await callGemini(model);
+    if (response.status !== 503) break;
+    logger.warn("Gemini model overloaded, trying next", { model });
+  }
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    logger.error("Gemini request failed", { model, status: response.status, error: errorText.slice(0, 500), uid });
+    if (response.status === 503) {
+      throw new HttpsError("unavailable", "Gemini is busy right now. Please try again in a moment.");
+    }
+    if (response.status === 429) {
+      throw new HttpsError("resource-exhausted", "Gemini usage limit reached. Please try again later.");
+    }
+    throw new HttpsError("internal", "Gemini could not answer right now.");
+  }
+
+  const json = await response.json();
+  const text = (json?.candidates?.[0]?.content?.parts || [])
+    .map((part) => part?.text || "")
+    .join("")
+    .trim();
+
+  if (!text) {
+    logger.warn("Gemini returned no text", { finishReason: json?.candidates?.[0]?.finishReason, uid });
+    throw new HttpsError("internal", "Gemini returned an empty response.");
+  }
+
+  return text;
+}
+
+// Free-form prompt from the admin-only Gemini tab. Checked here too, since hiding the tab
+// doesn't stop a signed-in client from calling the function.
+exports.askGemini = onCall({ timeoutSeconds: 120 }, async (request) => {
+  if (!request.auth?.uid) {
+    throw new HttpsError("unauthenticated", "Authentication is required.");
+  }
+
+  const callerSnap = await getFirestore().collection("users").doc(request.auth.uid).get();
+  if (callerSnap.data()?.admin !== true) {
+    throw new HttpsError("permission-denied", "Only admins can use Gemini.");
+  }
+
+  const prompt = typeof request.data?.prompt === "string" ? request.data.prompt.trim() : "";
+  if (!prompt) {
+    throw new HttpsError("invalid-argument", "prompt is required.");
+  }
+  if (prompt.length > GEMINI_MAX_PROMPT_LENGTH) {
+    throw new HttpsError("invalid-argument", `prompt must be ${GEMINI_MAX_PROMPT_LENGTH} characters or fewer.`);
+  }
+
+  return { text: await generateWithGemini(prompt, request.auth.uid) };
+});
+
+// "Summarize this month" in ReportsListView: a Gemini-written report of the caller's own month,
+// built from their clock-out reports and history. Reads only the caller's data, so any
+// signed-in user may call it. monthStart/monthEnd are epoch ms of the month as the app shows
+// it (device calendar); monthTitle is its label, e.g. "September 2026".
+exports.summarizeMonth = onCall({ timeoutSeconds: 120 }, async (request) => {
+  const uid = request.auth?.uid;
+  if (!uid) {
+    throw new HttpsError("unauthenticated", "Authentication is required.");
+  }
+
+  const { monthStart, monthEnd, monthTitle } = request.data || {};
+  if (
+    !Number.isFinite(monthStart) ||
+    !Number.isFinite(monthEnd) ||
+    monthEnd <= monthStart ||
+    monthEnd - monthStart > MAX_MONTH_RANGE_MS
+  ) {
+    throw new HttpsError("invalid-argument", "monthStart and monthEnd must span one month.");
+  }
+  const title = typeof monthTitle === "string" && monthTitle.trim() ? monthTitle.trim() : "this month";
+  const start = new Date(monthStart);
+  const end = new Date(monthEnd);
+
+  const db = getFirestore();
+  const userRef = db.collection("users").doc(uid);
+  const [userSnap, reportsSnap, historySnap] = await Promise.all([
+    userRef.get(),
+    userRef.collection("reports").where("timestamp", ">=", start).where("timestamp", "<", end).orderBy("timestamp").get(),
+    userRef.collection("history").where("clockOut", ">=", start).where("clockOut", "<", end).get(),
+  ]);
+
+  const reports = reportsSnap.docs
+    .map((doc) => doc.data() || {})
+    .filter((data) => typeof data.reportText === "string" && data.reportText.trim().length > 0);
+  if (reports.length === 0) {
+    throw new HttpsError("failed-precondition", `You have no reports in ${title} to summarize.`);
+  }
+
+  const userData = userSnap.data() || {};
+  const name = formatDisplayName(userData.name, userData.surname);
+  const totalMs = historySnap.docs.reduce((sum, doc) => sum + (Number(doc.data()?.durationMs) || 0), 0);
+  const shiftCount = historySnap.size;
+
+  const reportLines = reports
+    .map((data) => {
+      const day =
+        data.timestamp?.toDate?.().toLocaleDateString("en-US", {
+          timeZone: SCHEDULE_TIME_ZONE,
+          weekday: "short",
+          month: "short",
+          day: "numeric",
+        }) || "unknown date";
+      return `- ${day}: ${data.reportText.trim()}`;
+    })
+    .join("\n")
+    .slice(0, SUMMARY_MAX_REPORTS_LENGTH);
+
+  const prompt = [
+    `You are writing a monthly work report for ${name}, an employee, covering ${title}.`,
+    `They worked ${shiftCount} shift${shiftCount === 1 ? "" : "s"} totaling ${formatDuration(totalMs)} this month.`,
+    "Below are their end-of-shift reports, one per line with the date.",
+    "",
+    "Write the report in the second person (\"you\") with these sections, each title in bold on its own line:",
+    "**Overview** – two or three sentences on the month as a whole.",
+    "**Key accomplishments** – bullet points (\"- \") of the most important work.",
+    "**Recurring work** – bullet points of tasks or areas that came up repeatedly.",
+    "**Hours** – one line with the shift count and total hours given above.",
+    "Use only what the reports say; do not invent projects, numbers or outcomes. Do not use # headings.",
+    "",
+    "Reports:",
+    reportLines,
+  ].join("\n");
+
+  return { text: await generateWithGemini(prompt, uid) };
 });
 
 // ---------------- scheduled clock enforcement ----------------

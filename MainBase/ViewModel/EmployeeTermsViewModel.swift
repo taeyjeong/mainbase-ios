@@ -7,6 +7,8 @@ import Foundation
 final class EmployeeTermsViewModel: ObservableObject {
     @Published var terms = EmploymentTerms()
     @Published private(set) var isLoading = true
+    /// Whether an admin has ever saved terms; until then `terms` holds the editor defaults.
+    @Published private(set) var hasSavedTerms = false
     @Published private(set) var isSaving = false
     @Published var alertMessage: String?
 
@@ -28,6 +30,7 @@ final class EmployeeTermsViewModel: ObservableObject {
             let snapshot = try await termsRef.getDocument()
             if let data = snapshot.data() {
                 terms = EmploymentTerms(data: data)
+                hasSavedTerms = true
             }
         } catch {
             alertMessage = "Could not load pay notes and schedule right now."
@@ -35,10 +38,7 @@ final class EmployeeTermsViewModel: ObservableObject {
     }
 
     func save() async {
-        if let invalidDay = Weekday.allCases.first(where: { day in
-            guard let workDay = terms.schedule[day], workDay.isWorking else { return false }
-            return workDay.endMinutes <= workDay.startMinutes
-        }) {
+        if let invalidDay = EmploymentTerms.invalidDay(in: terms.schedule) {
             alertMessage = "\(invalidDay.displayName)'s end time must be after its start time."
             return
         }
@@ -49,9 +49,35 @@ final class EmployeeTermsViewModel: ObservableObject {
         data["updatedByEmail"] = Auth.auth().currentUser?.email ?? ""
         do {
             try await termsRef.setData(data)
+            hasSavedTerms = true
             alertMessage = "Pay notes and schedule saved."
         } catch {
             alertMessage = error.localizedDescription
+        }
+    }
+
+    /// The employee's own edit (EditMyScheduleSheet). Writes only the schedule, merged into the
+    /// terms doc so the admin's pay notes are untouched; firestore.rules limits owners to these
+    /// fields. Returns an error message, or nil once saved.
+    func saveSchedule(_ schedule: [Weekday: WorkDay]) async -> String? {
+        if let invalidDay = EmploymentTerms.invalidDay(in: schedule) {
+            return "\(invalidDay.displayName)'s end time must be after its start time."
+        }
+        isSaving = true
+        defer { isSaving = false }
+        var updated = terms
+        updated.schedule = schedule
+        do {
+            try await termsRef.setData([
+                "schedule": updated.firestoreData["schedule"] ?? [:],
+                "updatedAt": FieldValue.serverTimestamp(),
+                "updatedByEmail": Auth.auth().currentUser?.email ?? "",
+            ], merge: true)
+            terms = updated
+            hasSavedTerms = true
+            return nil
+        } catch {
+            return "Could not save your schedule right now."
         }
     }
 }

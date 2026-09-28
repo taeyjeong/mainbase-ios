@@ -76,7 +76,8 @@ final class ReportsViewModel: ObservableObject {
                                 emoji: emoji,
                                 reportText: $0.reportText,
                                 timestamp: $0.timestamp,
-                                messageCount: $0.messageCount
+                                messageCount: $0.messageCount,
+                                editedAt: $0.editedAt
                             )
                         }
                         self.rebuild()
@@ -109,7 +110,8 @@ final class ReportsViewModel: ObservableObject {
                         emoji: emoji,
                         reportText: reportText,
                         timestamp: ts.dateValue(),
-                        messageCount: messageCount
+                        messageCount: messageCount,
+                        editedAt: (data["editedAt"] as? Timestamp)?.dateValue()
                     )
                 }
                 self.reportsByUser[userId] = entries
@@ -123,6 +125,52 @@ final class ReportsViewModel: ObservableObject {
             .map { (id: $0.key, name: $0.value) }
             .filter { id, _ in !(reportsByUser[id]?.isEmpty ?? true) }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// The filter is set to the signed-in user, which offers "Summarize this month".
+    var isFilteredToCurrentUser: Bool {
+        guard let selectedUserId else { return false }
+        return selectedUserId == currentUserId
+    }
+
+    func canEdit(_ report: Report) -> Bool {
+        report.userId == currentUserId
+    }
+
+    /// The owner's edit of their own report. Changes only the text (plus editedAt); the date,
+    /// author and replies stay as they were. Also updates the matching clock-out history entry
+    /// (same clock-out time, or its original time if an admin corrected the shift) so History
+    /// shows the same text. Returns an error message, or nil once saved.
+    func updateReportText(_ report: Report, to text: String) async -> String? {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Your report can't be empty." }
+        guard canEdit(report) else { return "You can only edit your own reports." }
+        guard trimmed != report.reportText else { return nil }
+
+        let userRef = db.collection("users").document(report.userId)
+        do {
+            try await userRef.collection("reports").document(report.id).updateData([
+                "reportText": trimmed,
+                "editedAt": FieldValue.serverTimestamp(),
+            ])
+        } catch {
+            return "Could not save your report right now."
+        }
+
+        // Best effort: the report is already saved, so a history mismatch shouldn't fail the edit.
+        let timestamp = Timestamp(date: report.timestamp)
+        let history = userRef.collection("history")
+        var matches = (try? await history.whereField("clockOut", isEqualTo: timestamp).getDocuments())?.documents ?? []
+        if matches.isEmpty {
+            matches = (try? await history.whereField("originalClockOut", isEqualTo: timestamp).getDocuments())?.documents ?? []
+        }
+        for doc in matches {
+            try? await doc.reference.updateData([
+                "report": trimmed,
+                "reportEditedAt": FieldValue.serverTimestamp(),
+            ])
+        }
+        return nil
     }
 
     var filteredReports: [Report] {
@@ -216,16 +264,16 @@ final class ReportsViewModel: ObservableObject {
         guard !trimmed.isEmpty else { return .failure("Message can't be empty.") }
         guard let currentUserId else { return .failure("You need to be signed in to chat.") }
         do {
-            let reportRef = db.collection("users").document(report.userId)
+            // messageCount on the report is incremented server-side by onReportChatMessageCreated;
+            // firestore.rules don't let clients write it.
+            try await db.collection("users").document(report.userId)
                 .collection("reports").document(report.id)
-            try await reportRef.collection("chatMessages").addDocument(data: [
-                "text": trimmed,
-                "senderId": currentUserId,
-                "senderName": currentUserName,
-                "createdAt": FieldValue.serverTimestamp(),
-            ])
-            // Keep the denormalized counter shown on the report card in sync.
-            try await reportRef.updateData(["messageCount": FieldValue.increment(Int64(1))])
+                .collection("chatMessages").addDocument(data: [
+                    "text": trimmed,
+                    "senderId": currentUserId,
+                    "senderName": currentUserName,
+                    "createdAt": FieldValue.serverTimestamp(),
+                ])
             return .ok
         } catch {
             return .failure("Could not send message right now.")

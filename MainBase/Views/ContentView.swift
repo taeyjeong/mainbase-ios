@@ -14,25 +14,35 @@ struct ContentView: View {
         Group {
             if authVM.isSignedIn {
                 TabView(selection: $selectedTab) {
-                    TimeTrackerView(onClockIn: { selectedTab = .projects })
+                    TimeTrackerView(onClockIn: { if trackerVM.isAdmin { selectedTab = .projects } })
                         .environmentObject(notificationVM)
                         .environmentObject(authVM)
                         .environmentObject(trackerVM)
                         .tabItem { Label("Clock In", systemImage: "clock") }
                         .tag(AppTab.clockIn)
 
-                    ProjectsListView()
-                        .tabItem { Label("Projects", systemImage: "folder.fill") }
-                        .tag(AppTab.projects)
+                    // Admin-only tabs. askGemini also checks admin server-side.
+                    if trackerVM.isAdmin {
+                        ProjectsListView()
+                            .tabItem { Label("Projects", systemImage: "folder.fill") }
+                            .tag(AppTab.projects)
 
-                    OperationsDiagramsView()
-                        .tabItem { Label("Operations", systemImage: "map.fill") }
-                        .tag(AppTab.operations)
+                        OperationsDiagramsView()
+                            .tabItem { Label("Operations", systemImage: "map.fill") }
+                            .tag(AppTab.operations)
+
+                        GeminiView()
+                            .tabItem { Label("Gemini", systemImage: "sparkles") }
+                            .tag(AppTab.gemini)
+                    }
                 }
                 .onChange(of: trackerVM.isClockedIn) { _, isClockedIn in
                     guard !didSetInitialTab else { return }
                     didSetInitialTab = true
-                    if isClockedIn { selectedTab = .projects }
+                    if isClockedIn && trackerVM.isAdmin { selectedTab = .projects }
+                }
+                .onChange(of: trackerVM.isAdmin) { _, isAdmin in
+                    if !isAdmin { selectedTab = .clockIn }
                 }
             } else {
                 NavigationStack {

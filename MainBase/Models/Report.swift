@@ -8,4 +8,6 @@ struct Report: Identifiable {
     let reportText: String
     let timestamp: Date
     let messageCount: Int
+    /// Set once the owner has edited the text (EditReportSheet).
+    var editedAt: Date? = nil
 }

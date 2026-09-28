@@ -1,8 +1,13 @@
 import SwiftUI
 
 struct ReportsListView: View {
+    /// Called with the selected month when the user asks for a summary of their own reports;
+    /// the parent shows MonthlySummaryPopup, since a pop-up here would be clipped to this list.
+    var onSummarizeMonth: (Date) -> Void = { _ in }
+
     @StateObject private var vm = ReportsViewModel()
     @State private var chattingReport: Report?
+    @State private var editingReport: Report?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -19,9 +24,17 @@ struct ReportsListView: View {
                 if vm.reportsForSelectedMonth.isEmpty {
                     emptyState(message: emptyMonthMessage)
                 } else {
+                    if vm.isFilteredToCurrentUser {
+                        summarizeButton
+                            .padding(.bottom, 4)
+                    }
                     VStack(spacing: 14) {
                         ForEach(vm.reportsForSelectedMonth) { report in
-                            ReportRow(report: report, onOpenChat: { chattingReport = report })
+                            ReportRow(
+                                report: report,
+                                onOpenChat: { chattingReport = report },
+                                onEdit: vm.canEdit(report) ? { editingReport = report } : nil
+                            )
                         }
                     }
                     .padding(.vertical, 8)
@@ -37,6 +50,9 @@ struct ReportsListView: View {
         }
         .sheet(item: $chattingReport) { report in
             ReportChatView(report: report, vm: vm)
+        }
+        .sheet(item: $editingReport) { report in
+            EditReportSheet(report: report, vm: vm)
         }
     }
 
@@ -95,6 +111,22 @@ struct ReportsListView: View {
         }
     }
 
+    private var summarizeButton: some View {
+        Button { onSummarizeMonth(vm.selectedMonth) } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 14, weight: .semibold))
+                Text("Summarize this month")
+                    .font(.system(size: 15, weight: .semibold))
+            }
+            .foregroundColor(.white)
+            .frame(maxWidth: .infinity)
+            .frame(height: 44)
+            .background(RoundedRectangle(cornerRadius: 12).fill(AppColors.primary))
+        }
+        .buttonStyle(.plain)
+    }
+
     private var filterMenu: some View {
         Menu {
             Picker("Filter by person", selection: $vm.selectedUserId) {
@@ -148,6 +180,8 @@ struct ReportsListView: View {
 private struct ReportRow: View {
     let report: Report
     let onOpenChat: () -> Void
+    /// Only set for the signed-in user's own reports.
+    let onEdit: (() -> Void)?
 
     private static let dateFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -162,7 +196,7 @@ private struct ReportRow: View {
     }()
 
     private var formattedTimestamp: String {
-        "\(Self.dateFormatter.string(from: report.timestamp)) · \(Self.timeFormatter.string(from: report.timestamp))"
+        "\(Self.dateFormatter.string(from: report.timestamp)) · \(Self.timeFormatter.string(from: report.timestamp))\(report.editedAt == nil ? "" : " · edited")"
     }
 
     private var displayEmoji: String {
@@ -196,6 +230,9 @@ private struct ReportRow: View {
             HStack(alignment: .bottom) {
                 ReportLinksGrid(links: parsed.links)
                 Spacer(minLength: 8)
+                if let onEdit {
+                    editButton(action: onEdit)
+                }
                 replyButton
             }
         }
@@ -206,6 +243,22 @@ private struct ReportRow: View {
                 .fill(AppColors.cardBackground)
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
         )
+    }
+
+    private func editButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 5) {
+                Image(systemName: "pencil")
+                    .font(.system(size: 11, weight: .semibold))
+                Text("Edit")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .foregroundColor(AppColors.primary)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .background(Capsule().fill(AppColors.primary.opacity(0.1)))
+        }
+        .buttonStyle(.plain)
     }
 
     private var replyButton: some View {

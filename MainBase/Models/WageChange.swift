@@ -92,10 +92,11 @@ struct WageChange: Identifiable, Equatable {
 
 /// An employee's wage log, oldest first, with the rules for which wage applies when.
 ///
-/// - The first wage applies right away: from the month it's logged, and to every earlier month,
-///   so payouts before it was logged still have a wage.
+/// - The first wage applies right away: from the month it's logged, and to all work before it
+///   (e.g. hours logged since Feb 1 with no wage, then $3/hr logged Apr 15 → Feb onward is $3/hr).
 /// - Every later change (salary → hourly, salary → new salary, hourly → salary, hourly → new
-///   hourly) starts on the 1st of the month after it's logged.
+///   hourly) starts on the 1st of the month after it's logged (e.g. $4/hr logged Jun 30 →
+///   July onward is $4/hr; Feb–June stay $3/hr).
 struct WageHistory {
     let changes: [WageChange]
 

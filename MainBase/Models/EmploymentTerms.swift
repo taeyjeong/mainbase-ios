@@ -17,6 +17,12 @@ struct WorkDay: Equatable {
 
     static let standard = WorkDay(isWorking: true, startMinutes: 9 * 60, endMinutes: 17 * 60)
     static let off = WorkDay(isWorking: false, startMinutes: 9 * 60, endMinutes: 17 * 60)
+
+    /// Hours on the clock this day; 0 on a day off or when the end isn't after the start.
+    var scheduledHours: Double {
+        guard isWorking, endMinutes > startMinutes else { return 0 }
+        return Double(endMinutes - startMinutes) / 60
+    }
 }
 
 /// Pay notes and weekly schedule for one employee, stored at users/{uid}/employment/terms and
@@ -64,13 +70,9 @@ struct EmploymentTerms {
 
 extension EmploymentTerms {
     /// Every schedule is set, stored and enforced in US Pacific time, for all employees.
-    /// Mirrors SCHEDULE_TIME_ZONE in functions/scheduleTime.js.
-    ///
-    /// TODO (not implemented yet): when schedule times are shown to an employee, convert them
-    /// from Pacific to the time zone of the `country` on their profile (UserProfile.country),
-    /// e.g. a 9:00 AM Pacific start shows as 1:00 AM the next day for a user in Korea. Countries
-    /// spanning several zones (US, Canada, Australia, …) will need a way to pick one. Admin
-    /// screens keep showing Pacific.
+    /// Mirrors SCHEDULE_TIME_ZONE in functions/scheduleTime.js. ScheduleView shows an employee
+    /// their shifts converted to the device's time zone (e.g. a 9:00 AM Pacific start shows as
+    /// 1:00 AM the next day in Korea); the admin schedule editor keeps showing Pacific.
     static let scheduleTimeZone = TimeZone(identifier: "America/Los_Angeles")!
 
     /// A clock-in within this long after the scheduled start is recorded as the scheduled start.
@@ -78,6 +80,19 @@ extension EmploymentTerms {
     /// A session counts toward a shift only if it started no earlier than this before the start.
     /// Mirrors EARLY_CLOCK_IN_ALLOWANCE_MS in functions/index.js.
     static let earlyClockInAllowance: TimeInterval = 4 * 60 * 60
+
+    /// Total scheduled hours across the week.
+    static func weeklyHours(_ schedule: [Weekday: WorkDay]) -> Double {
+        Weekday.allCases.reduce(0) { $0 + (schedule[$1]?.scheduledHours ?? 0) }
+    }
+
+    /// The first working day whose end isn't after its start, which can't be saved.
+    static func invalidDay(in schedule: [Weekday: WorkDay]) -> Weekday? {
+        Weekday.allCases.first { day in
+            guard let workDay = schedule[day], workDay.isWorking else { return false }
+            return workDay.endMinutes <= workDay.startMinutes
+        }
+    }
 
     /// The scheduled shift on the schedule-local day containing `date`, or nil on a day off.
     func shift(on date: Date) -> DateInterval? {

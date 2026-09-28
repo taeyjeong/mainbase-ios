@@ -581,11 +581,13 @@ Every wage is its own entry in `users/{uid}/wageHistory/{yyyy-MM}`. Nothing is e
 | Hourly → new hourly | 1st of the next month |
 
 - Logging again before a change starts **replaces** that upcoming change (one entry per month). It can also be cancelled.
-- A payout month uses the wage in effect that month. Months before the first wage use the first wage.
+- A payout month uses the wage in effect that month. **Work logged before the first wage uses the first wage.**
+- Example: the employee starts Feb 1 with no wage. You log $3/hour on Apr 15, then $4/hour on Jun 30. Feb 1 – Jun 30 pays $3/hour, and July onward pays $4/hour.
 - Pay saved on `employment/terms` before the wage log existed (`payType`/`payRate`) is moved into the log as the first wage the next time an admin opens that employee.
 
 ### Payouts
 
+- The payouts list covers **every month from the employee's first logged shift** through the current month.
 - **Unpaid month:** an estimate. Hourly is hours × that month's hourly rate. Salary is that month's monthly salary.
 - **Mark Paid** opens `MarkPaidSheet`, which adds an optional **bonus**, **deduction** and **note**. **Total = base pay + bonus − deduction**, and it can't go below $0. It freezes everything in `users/{uid}/payouts/{yyyy-MM}`, so later wage changes don't rewrite paid months.
 - **Tap a month** for `PayoutMonthCalendarView`: hours per day, earnings per day for hourly, and the base / bonus / deduction / total / note summary.
@@ -754,6 +756,7 @@ flowchart TB
     "EmployeePayoutsViewModel": {
       "init": "userId",
       "published": [
+        "monthKeys: [String] (newest first)",
         "hoursByMonth: [String: Double]",
         "entriesByDay: [String: [HistoryEntry]] (\"yyyy-MM-dd\", earliest first)",
         "paidRecords: [String: PayoutRecord]",
@@ -761,7 +764,7 @@ flowchart TB
         "alertMessage"
       ],
       "methods": [
-        "load() — history for the last 6 months + all payout docs",
+        "load() — all history + all payout docs; monthKeys = first shift month → current month",
         "records(using: WageHistory) → [PayoutRecord] (paid = frozen, unpaid = estimate at that month's wage)",
         "markPaid(_:bonus:deduction:note:) → String? error — admin only (TODO: employee too)",
         "unmarkPaid(_:)"

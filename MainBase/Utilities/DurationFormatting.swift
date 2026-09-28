@@ -14,4 +14,12 @@ enum DurationFormatting {
             return "<1h"
         }
     }
+
+    /// Formats a number of hours as e.g. "40h" or "37h 30m".
+    static func hoursMinutes(_ hours: Double) -> String {
+        let totalMinutes = Int((hours * 60).rounded())
+        let h = totalMinutes / 60
+        let m = totalMinutes % 60
+        return m == 0 ? "\(h)h" : "\(h)h \(m)m"
+    }
 }

@@ -2,9 +2,7 @@ import SwiftUI
 
 /// Admin-only screen, pushed from an employee row in AdminToolsView. Logs the employee's wage
 /// (hourly rate or monthly salary; see WageHistory for when a change starts), reviews and marks
-/// monthly payouts, and sets pay notes and the weekly schedule. Schedule times are wall-clock
-/// times in US Pacific (EmploymentTerms.scheduleTimeZone), so the pickers run in a fixed GMT
-/// calendar to avoid shifting by the admin's own zone.
+/// monthly payouts, and sets pay notes and the weekly schedule (WeeklyScheduleEditor).
 struct EmployeeDetailView: View {
     let employee: EmployeeEntry
     @StateObject private var termsVM: EmployeeTermsViewModel
@@ -17,8 +15,6 @@ struct EmployeeDetailView: View {
     @State private var payoutToMarkPaid: PayoutRecord?
 
     private static let currencyFormat = FloatingPointFormatStyle<Double>.Currency(code: "USD")
-
-    private static let pickerTimeZone = TimeZone(identifier: "GMT")!
 
     init(employee: EmployeeEntry) {
         self.employee = employee
@@ -242,7 +238,7 @@ struct EmployeeDetailView: View {
                 .foregroundColor(AppColors.text)
                 .padding(.bottom, 4)
 
-            Text("Unpaid months are estimated from clock-out history and the wage in effect that month. Marking a month paid locks in its numbers, bonus and deduction.")
+            Text("Every month since the first logged shift. Unpaid months are estimated from clock-out history and the wage in effect that month; work before the first wage uses the first wage. Marking a month paid locks in its numbers, bonus and deduction.")
                 .font(.system(size: 12))
                 .foregroundColor(AppColors.textSecondary)
                 .padding(.bottom, 16)
@@ -284,7 +280,7 @@ struct EmployeeDetailView: View {
     private func payoutRow(_ record: PayoutRecord) -> some View {
         HStack(alignment: .center, spacing: 12) {
             NavigationLink {
-                PayoutMonthCalendarView(record: record, entriesByDay: payoutsVM.entriesByDay)
+                PayoutMonthCalendarView(monthKey: record.id, wages: wageVM.history, payoutsVM: payoutsVM)
             } label: {
                 HStack(spacing: 6) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -345,73 +341,7 @@ struct EmployeeDetailView: View {
     // MARK: - Schedule
 
     private var scheduleSection: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Text("Weekly Schedule")
-                .font(.system(size: 16, weight: .semibold))
-                .foregroundColor(AppColors.text)
-                .padding(.bottom, 4)
-
-            Text("All times are Pacific Time (US).")
-                .font(.system(size: 12))
-                .foregroundColor(AppColors.textSecondary)
-                .padding(.bottom, 16)
-
-            ForEach(Array(Weekday.allCases.enumerated()), id: \.element) { index, day in
-                if index > 0 {
-                    Divider()
-                        .padding(.vertical, 8)
-                }
-                dayRow(day)
-            }
-        }
-        .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 16)
-                .fill(AppColors.cardBackground)
-                .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
-        )
-    }
-
-    private func dayRow(_ day: Weekday) -> some View {
-        let workDay = Binding(
-            get: { termsVM.terms.schedule[day] ?? .off },
-            set: { termsVM.terms.schedule[day] = $0 }
-        )
-        return VStack(alignment: .leading, spacing: 8) {
-            Toggle(isOn: workDay.isWorking) {
-                Text(day.displayName)
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundColor(AppColors.text)
-            }
-            .tint(AppColors.primary)
-
-            if workDay.wrappedValue.isWorking {
-                HStack {
-                    DatePicker("Start", selection: timeBinding(workDay.startMinutes), displayedComponents: .hourAndMinute)
-                        .labelsHidden()
-                    Text("to")
-                        .font(.system(size: 13))
-                        .foregroundColor(AppColors.textSecondary)
-                    DatePicker("End", selection: timeBinding(workDay.endMinutes), displayedComponents: .hourAndMinute)
-                        .labelsHidden()
-                    Spacer()
-                }
-                .environment(\.timeZone, Self.pickerTimeZone)
-            }
-        }
-    }
-
-    /// Bridges minutes-since-midnight to a Date on 1970-01-01 in GMT for DatePicker.
-    private func timeBinding(_ minutes: Binding<Int>) -> Binding<Date> {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = Self.pickerTimeZone
-        return Binding(
-            get: { Date(timeIntervalSince1970: TimeInterval(minutes.wrappedValue * 60)) },
-            set: { date in
-                let components = calendar.dateComponents([.hour, .minute], from: date)
-                minutes.wrappedValue = (components.hour ?? 0) * 60 + (components.minute ?? 0)
-            }
-        )
+        WeeklyScheduleEditor(schedule: $termsVM.terms.schedule)
     }
 
     private var saveButton: some View {

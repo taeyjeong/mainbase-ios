@@ -24,6 +24,7 @@ struct ProfileSheetView: View {
                             appearanceSection
                             flowMapButton
                             historyButton
+                            monthlyReportsButton
                             if vm.profile.admin {
                                 adminToolsButton
                             }
@@ -41,9 +42,12 @@ struct ProfileSheetView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
-                    Button("Done") { dismiss() }
-                        .font(.system(size: 16, weight: .semibold))
-                        .foregroundColor(AppColors.primary)
+                    Button { dismiss() } label: {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 16, weight: .semibold))
+                            .foregroundColor(AppColors.text)
+                    }
+                    .accessibilityLabel("Close")
                 }
             }
         }
@@ -85,6 +89,19 @@ struct ProfileSheetView: View {
                 icon: "clock.arrow.circlepath",
                 title: "History",
                 subtitle: "Your past clock-outs and reports"
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var monthlyReportsButton: some View {
+        NavigationLink {
+            MonthlyReportsView()
+        } label: {
+            ProfileNavRow(
+                icon: "sparkles",
+                title: "Monthly Reports",
+                subtitle: "Your saved AI summaries"
             )
         }
         .buttonStyle(.plain)
