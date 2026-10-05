@@ -10,12 +10,21 @@ struct CompletedTaskItem: Identifiable {
 
 struct ClockOutSheetView: View {
     @Binding var report: String
+    /// Link rows under the report box; always at least one, blank rows are ignored on submit.
+    @Binding var links: [ReportLinkDraft]
+    /// The one project Main picked for this report, if any.
+    @Binding var projectMainId: String?
+    var projectMains: [ProjectMain] = []
     var completedTasks: [CompletedTaskItem] = []
     let onCancel: () -> Void
     let onSubmit: () -> Void
 
     private var trimmedReport: String {
         report.trimmingCharacters(in: .whitespaces)
+    }
+
+    private var canSubmit: Bool {
+        !trimmedReport.isEmpty && !links.contains(where: \.isInvalid)
     }
 
     var body: some View {
@@ -39,19 +48,32 @@ struct ClockOutSheetView: View {
                 .padding(.top, 6)
                 .padding(.bottom, 16)
 
-            TextField("What did you work on?", text: $report, axis: .vertical)
-                .font(.system(size: 16))
-                .foregroundColor(AppColors.text)
-                .lineLimit(5...8)
-                .padding(12)
-                .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppColors.border, lineWidth: 1))
-                .padding(.horizontal, 20)
-                .padding(.bottom, 20)
+            ScrollView(showsIndicators: false) {
+                VStack(alignment: .leading, spacing: 0) {
+                    TextField("What did you work on?", text: $report, axis: .vertical)
+                        .font(.system(size: 16))
+                        .foregroundColor(AppColors.text)
+                        .lineLimit(5...8)
+                        .padding(12)
+                        .overlay(RoundedRectangle(cornerRadius: 12).stroke(AppColors.border, lineWidth: 1))
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 20)
 
-            if !completedTasks.isEmpty {
-                completedTasksList
-                    .padding(.bottom, 20)
+                    ReportProjectMainPicker(projectMains: projectMains, selectedMainId: $projectMainId)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 20)
+
+                    ReportLinkFields(links: $links)
+                        .padding(.horizontal, 20)
+                        .padding(.bottom, 20)
+
+                    if !completedTasks.isEmpty {
+                        completedTasksList
+                            .padding(.bottom, 20)
+                    }
+                }
             }
+            .scrollDismissesKeyboard(.interactively)
 
             HStack(spacing: 12) {
                 Button("Cancel", action: onCancel)
@@ -68,12 +90,12 @@ struct ClockOutSheetView: View {
                         .padding(.vertical, 13)
                         .background(
                             RoundedRectangle(cornerRadius: 12)
-                                .fill(trimmedReport.isEmpty
-                                      ? AppColors.primary.opacity(0.5)
-                                      : AppColors.primary)
+                                .fill(canSubmit
+                                      ? AppColors.primary
+                                      : AppColors.primary.opacity(0.5))
                         )
                 }
-                .disabled(trimmedReport.isEmpty)
+                .disabled(!canSubmit)
             }
             .padding(.horizontal, 20)
             .padding(.bottom, 32)
@@ -115,5 +137,5 @@ struct ClockOutSheetView: View {
 }
 
 #Preview {
-    ClockOutSheetView(report: .constant(""), onCancel: {}, onSubmit: {})
+    ClockOutSheetView(report: .constant(""), links: .constant([ReportLinkDraft()]), projectMainId: .constant(nil), onCancel: {}, onSubmit: {})
 }

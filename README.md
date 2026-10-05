@@ -4,20 +4,19 @@ iOS app for team clock-in/out, shift reports, and notifications. Built with Swif
 
 ---
 
-<!-- DRAFT SECTIONS 1–13 — review and tell me which to keep, edit, or remove -->
-
 ## 1. Project overview
 
-MainBase is a SwiftUI iOS app for distributed teams to track work sessions and projects. Team members clock in and out, write an end-of-shift report, and see who is online. The **Projects** tab holds projects with tasks, subtasks, chat, photos, budgets and diagrams. The **Operations** tab shows workflow, user-flow and database diagrams. Push notifications (via Cloud Functions) cover clock events, task assignments and completions, chat messages, and schedule reminders.
+MainBase is a SwiftUI iOS app for distributed teams to track work sessions and projects. Team members clock in and out, write an end-of-shift report, and see who is online. From **My Schedule** they see their upcoming shifts, their wage, last month's paycheck, and can request a day off or a shortened day. Admins also get three more tabs: **Projects** (tasks, subtasks, chat, photos, budgets and diagrams), **Operations** (workflow, user-flow and database diagrams) and **Gemini** (ask Gemini questions). Push notifications (via Cloud Functions) cover clock events, task assignments and completions, chat messages, and schedule reminders.
 
 **Primary users**
-- **Team members**: clock in/out, write shift reports, work on project tasks, view team status and their own history
+- **Team members**: clock in/out, write shift reports, view team status and their own history, and open **My Schedule** (shifts, wage, last month's paycheck, day-off / shortened-day requests)
 - **Admins** (`users.admin == true`): everything above, plus **Profile → Admin Tools**:
   - employee status
   - wage log (hourly rate or monthly salary; changes start on the 1st of the next month) and pay notes
   - monthly payouts (bonus, deduction, note)
   - weekly schedules
   - employee history
+  - Projects, Operations and Gemini tabs
   - archived projects
   - project mains
   - clock-notification preference
@@ -29,11 +28,11 @@ MainBase is a SwiftUI iOS app for distributed teams to track work sessions and p
 | Requirement | Version / notes |
 |-------------|-----------------|
 | macOS | Required for iOS development |
-| Xcode | 15+ recommended (project uses SwiftPM + file-system synchronized groups) |
+| Xcode | 16+ (project format 77, with SwiftPM and file-system synchronized groups) |
 | iOS deployment target | **17.0** |
 | Swift | 5.0 |
 | Firebase iOS SDK | **12.15.0** (via Swift Package Manager) |
-| Firebase products used | Auth, Firestore, Analytics, Messaging, Storage |
+| Firebase products used | Auth, Firestore, Functions, Analytics, Messaging, Storage |
 | Firebase project | Shared with `lacoachoffice` — credentials in `GoogleService-Info.plist` |
 
 ---
@@ -185,18 +184,26 @@ MainBase uses a tab bar after sign-in. No screenshots are checked in yet. Add im
     │           ├── Archived Projects › (sheet)
     │           └── Manage Project Mains
     ├── Notifications sheet (bell) → NotificationsView
-    └── Schedule sheet → ScheduleView (placeholder)
+    └── Schedule sheet (calendar icon) → ScheduleView
+          ├── Wage card + last month's paycheck card (paid or estimated)
+          ├── Request Day Off or Shortened Day → TimeOffRequestSheet
+          ├── My requests (status; long-press to withdraw a pending one)
+          ├── Next 7 days of shifts (in the device's time zone)
+          └── Edit → EditMyScheduleSheet
 
-  Tab 2: Projects (ProjectsListView)
+  Tab 2: Projects (ProjectsListView), admins only
     └── ProjectDetailView (tasks, subtasks, chat, photos, budget, diagrams)
 
-  Tab 3: Operations (OperationsDiagramsView)
+  Tab 3: Operations (OperationsDiagramsView), admins only
     └── Workflow automation · User flow · Database design diagrams
+
+  Tab 4: Gemini (GeminiView), admins only
 ```
 
 **Tab behavior**
 - Default tab on launch: **Clock In**
-- If the user is already clocked in on first load, the app switches to **Projects** once. Clocking in also switches to Projects.
+- Non-admins see only **Clock In**.
+- If an admin is already clocked in on first load, the app switches to **Projects** once.
 
 ---
 
@@ -246,7 +253,7 @@ The app registers for remote notifications on launch (`AppDelegate`) and saves t
 - **Offline**: no explicit offline queue. Firestore calls may fail silently in some ViewModels.
 - **Schedule times**: always US Pacific. Showing employees their profile country's timezone is a TODO (`EmploymentTerms.scheduleTimeZone`).
 - **Payouts**: only admins can mark a month paid. The employee doing it is a TODO (`PayoutRecord`).
-- **Employee schedule view**: employees can't see their own schedule yet. `ScheduleView` is a placeholder.
+- **Time-off requests**: employees can send them, but there is no admin screen to approve or deny them yet, and admins aren't notified. For now an admin sets `status` to `approved` / `denied` on `users/{uid}/timeOffRequests/{id}` directly. An approved request doesn't change the weekly schedule or the clock reminders from `enforceClockSchedules`.
 - **Overnight shifts**: a scheduled shift can't cross midnight (end must be after start).
 - **Wage corrections**: a wage already in effect can't be edited. A typo in the first wage can only be fixed by logging a new wage, which starts next month.
 - **Shared Firebase project**: see the warning in section 4.
@@ -257,15 +264,17 @@ The app registers for remote notifications on launch (`AppDelegate`) and saves t
 
 | Change | Summary |
 |--------|---------|
+| My Schedule | `ScheduleView` shows the employee's wage, last month's paycheck (frozen if paid, otherwise estimated) and upcoming shifts, and lets them request a day off or a shortened day (`TimeOffRequestSheet` → `users/{uid}/timeOffRequests`) |
 | Admin Tools | Admin-only screen from Profile: clock notifications, employees, employee history, archived projects, project mains |
 | Wage log | Wages are logged in `users/{uid}/wageHistory` with the date logged. The first wage applies right away; later changes start on the 1st of the next month |
 | Pay & schedule | `EmployeeDetailView`: wage, pay notes, weekly schedule (US Pacific) |
 | Monthly payouts | Per-month estimates at that month's wage. **Mark Paid** adds bonus / deduction / note and locks the numbers in `users/{uid}/payouts`. Tap a month for a calendar of hours (and hourly earnings) per day |
 | Schedule enforcement | `enforceClockSchedules`: clock-in reminder at +15m, clock-out reminder at +30m, auto clock-out at +90m (recorded at the scheduled end). Clock-in within 30m of start is recorded as the start |
 | History | Moved behind **History ›** (own) and **Employee History ›** (admins) |
-| Tabs | **Clock In**, **Projects**, **Operations** via `AppTab` (reports feed lives on Clock In) |
+| Tabs | **Clock In** for everyone; **Projects**, **Operations**, **Gemini** for admins only, via `AppTab` (reports feed lives on Clock In) |
 | Projects | Tasks, subtasks, chat, photos, budget, diagrams, archive/restore |
 | Clock out | Writes both `history` and `reports` subcollections |
+| Reports | A report can be tagged with one project Main (clock-out sheet or Edit Report). Owners can edit the text, Main and links of any past report; edits keep the original time and store no edit time (no "edited" label) |
 
 <!-- Replace with dated changelog entries as the project grows -->
 
@@ -295,8 +304,6 @@ If you add or rename Firestore fields:
 
 ---
 
-<!-- END DRAFT SECTIONS -->
-
 ## MVVM file structure
 
 ```
@@ -311,6 +318,7 @@ MainBase/
 │   ├── HistoryEntry.swift               ← Clock-out history row
 │   ├── NotificationType.swift           ← Notification + clock action enums (mirrors functions)
 │   ├── PayoutRecord.swift               ← Monthly payout: base pay + bonus − deduction, note
+│   ├── TimeOffRequest.swift             ← Day-off / shortened-day request (pending / approved / denied)
 │   ├── WageChange.swift                 ← PayType, WageChange (log entry), WageHistory (effective-date rules)
 │   ├── Project*.swift, OperationItem…   ← Projects, tasks, chat, expenses, mains
 │   ├── Report.swift, ReportChatMessage.swift
@@ -331,6 +339,7 @@ MainBase/
 │   ├── ProjectsViewModel.swift          ← Projects, tasks, archive/restore
 │   ├── ReportsViewModel.swift           ← All users' reports feed
 │   ├── TeamMemberViewModel.swift        ← Team online status
+│   ├── TimeOffRequestsViewModel.swift   ← The signed-in employee's time-off requests: load, submit, withdraw
 │   ├── TimeTrackerViewModel.swift       ← Clock in/out, scheduled clock-in snap, 8h cap
 │   └── WageHistoryViewModel.swift       ← Wage log for one employee
 │
@@ -345,7 +354,7 @@ MainBase/
 │   ├── Projects/                        ← Projects tab and project detail sheets
 │   ├── Operations/                      ← Operations tab diagrams
 │   ├── Notifications/                   ← NotificationsView, WorkNotificationCard
-│   ├── Schedule/                        ← ScheduleView (placeholder)
+│   ├── Schedule/                        ← ScheduleView, EditMyScheduleSheet, TimeOffRequestSheet
 │   ├── FlowMap/                         ← AppFlowMapView
 │   └── Profile/
 │       ├── ProfileSheetView.swift       ← Profile + ProfileNavRow
@@ -394,6 +403,7 @@ flowchart TB
         WageVM[WageHistoryViewModel]
         PayoutsVM[EmployeePayoutsViewModel]
         HistoryVM[HistoryViewModel]
+        TimeOffVM[TimeOffRequestsViewModel]
     end
 
     subgraph Models
@@ -406,6 +416,7 @@ flowchart TB
         WageHistory
         PayoutRecord
         EmployeeEntry
+        TimeOffRequest
     end
 
     ContentView --> AuthVM
@@ -437,6 +448,14 @@ flowchart TB
     PayoutsVM --> PayoutRecord
     PayoutsVM --> WageHistory
     AdminVM --> EmployeeEntry
+    TimeTrackerView --> ScheduleView
+    ScheduleView --> TermsVM
+    ScheduleView --> WageVM
+    ScheduleView --> PayoutsVM
+    ScheduleView --> TimeOffVM
+    ScheduleView --> TimeOffRequestSheet
+    TimeOffRequestSheet --> TimeOffVM
+    TimeOffVM --> TimeOffRequest
 
     TeamVM --> TeamMember
     ReportsVM --> Report
@@ -456,6 +475,8 @@ flowchart TB
 | Admin Tools | `AdminEmployeesViewModel`, `ProfileViewModel`, `ProjectsViewModel` | `EmployeeEntry` |
 | Employee detail | `EmployeeTermsViewModel`, `WageHistoryViewModel`, `EmployeePayoutsViewModel` | `EmploymentTerms`, `WageHistory`/`WageChange`, `PayoutRecord` |
 | Mark Paid sheet | `EmployeePayoutsViewModel` | `PayoutRecord` |
+| My Schedule (`ScheduleView`) | `EmployeeTermsViewModel`, `WageHistoryViewModel`, `EmployeePayoutsViewModel`, `TimeOffRequestsViewModel` (all for the signed-in user) | `EmploymentTerms`, `WageHistory`, `PayoutRecord`, `TimeOffRequest` |
+| Time-off request sheet | `TimeOffRequestsViewModel` | `TimeOffRequest` |
 | Notifications sheet | `NotificationViewModel` | `WorkNotification` |
 
 ## Firestore data structure
@@ -500,9 +521,20 @@ firestore/
     │
     ├── payouts/  {yyyy-MM}           ← Months marked paid (frozen hours/rate/base, bonus, deduction, note)
     │
+    ├── timeOffRequests/  {requestId} ← Employee's day-off / shortened-day requests
+    │   ├── kind: "dayOff" | "shortenedDay"
+    │   ├── shiftStart / shiftEnd: timestamp          ← The scheduled shift
+    │   ├── requestedStart / requestedEnd: timestamp  ← Hours to work instead (shortenedDay only)
+    │   ├── reason: string
+    │   ├── status: "pending" | "approved" | "denied"
+    │   ├── requestedByEmail: string
+    │   └── createdAt: timestamp
+    │
     ├── reports/  {reportId}          ← Written on clock out (if report non-empty)
-    │   ├── reportText: string
-    │   └── timestamp: timestamp
+    │   ├── reportText: string        ← The owner can edit it later (EditReportSheet); no edit time is stored
+    │   ├── projectMainId: string     ← Optional; at most one project Main per report
+    │   ├── links: array              ← Links added on the clock-out sheet; the owner can edit them later (EditReportSheet)
+    │   └── timestamp: timestamp      ← Clock-out time; never changed by an edit
     │
     ├── notifications/  {notificationId}  ← Created by Cloud Functions
     │   ├── type: string                e.g. "clock_event", "schedule_reminder"
@@ -550,11 +582,12 @@ flowchart LR
 |------|---------------------|---------|
 | `users/{uid}` | Clock in/out, profile save | `TimeTrackerViewModel`, `ProfileViewModel`, `TeamMemberViewModel`, `ReportsViewModel` |
 | `users/{uid}/history/{id}` | Clock out, auto clock-out (function) | `HistoryViewModel` → History / Employee History, `EmployeePayoutsViewModel` |
-| `users/{uid}/employment/terms` | Admin (Employee detail) | `EmployeeTermsViewModel`, `TimeTrackerViewModel`, `enforceClockSchedules` |
-| `users/{uid}/wageHistory/{yyyy-MM}` | Admin (Log Wage) | `WageHistoryViewModel` → payouts |
+| `users/{uid}/employment/terms` | Admin (Employee detail); the employee may edit only `schedule` (EditMyScheduleSheet) | `EmployeeTermsViewModel`, `TimeTrackerViewModel`, `enforceClockSchedules` |
+| `users/{uid}/wageHistory/{yyyy-MM}` | Admin (Log Wage) | `WageHistoryViewModel` → payouts, My Schedule wage card |
 | `users/{uid}/employment/scheduleState` | `enforceClockSchedules` | `enforceClockSchedules` |
-| `users/{uid}/payouts/{yyyy-MM}` | Admin (MarkPaidSheet) | `EmployeePayoutsViewModel` |
-| `users/{uid}/reports/{id}` | Clock out | `ReportsViewModel` → Reports tab |
+| `users/{uid}/payouts/{yyyy-MM}` | Admin (MarkPaidSheet) | `EmployeePayoutsViewModel` → payouts, My Schedule paycheck card |
+| `users/{uid}/timeOffRequests/{id}` | The employee (TimeOffRequestSheet; withdraw while pending); an admin answers | `TimeOffRequestsViewModel` → My Schedule |
+| `users/{uid}/reports/{id}` | Clock out; the owner may edit `reportText` / `projectMainId` / `links` (EditReportSheet) | `ReportsViewModel` → Reports tab |
 | `users/{uid}/notifications/{id}` | Cloud Functions | `NotificationViewModel` → bell sheet |
 
 ## Admin tools, pay & scheduling
@@ -567,6 +600,14 @@ Admins open **Profile → Admin Tools** to manage employees. Tapping an employee
 The `enforceClockSchedules` Cloud Function then sends clock-in/clock-out reminders and automatically clocks people out based on that schedule.
 
 **All schedule times and pay months are US Pacific (`America/Los_Angeles`).**
+
+### What employees see (My Schedule)
+
+The calendar icon on the Clock In tab opens `ScheduleView` for the signed-in employee:
+- **Wage**: the wage in effect this month (`WageHistory.current()`), as a monthly salary or an hourly rate.
+- **Last month's paycheck**: last Pacific month's `PayoutRecord`. It's the frozen **Paid** amount once an admin marks it paid, and until then it's an **Estimated** amount (hours × rate, or the salary).
+- **Request Day Off or Shortened Day** opens `TimeOffRequestSheet`. The employee picks one of their scheduled shifts in the next 60 days and either a full day off or the hours they'll work instead, plus an optional reason. It's saved as `pending` in `users/{uid}/timeOffRequests`. A shift with a pending or approved request is marked in the shift list and can't be requested again. A pending request can be withdrawn with a long-press.
+- **Edit** opens `EditMyScheduleSheet`, which changes only the weekly schedule, not the pay notes.
 
 ### Wage rules
 
@@ -742,7 +783,7 @@ flowchart TB
     "EmployeeTermsViewModel": {
       "init": "userId",
       "published": ["terms: EmploymentTerms (pay notes + schedule form)", "isLoading", "isSaving", "alertMessage"],
-      "methods": ["load()", "save() — checks each working day's end > start"]
+      "methods": ["load()", "save() — checks each working day's end > start", "saveSchedule(_:) → String? error — employee's own edit; writes only schedule"]
     },
     "WageHistoryViewModel": {
       "init": "userId",
@@ -770,6 +811,17 @@ flowchart TB
         "unmarkPaid(_:)"
       ]
     },
+    "TimeOffRequestsViewModel": {
+      "init": "userId",
+      "published": ["requests: [TimeOffRequest] (soonest shift first)", "isSaving", "alertMessage"],
+      "methods": [
+        "load()",
+        "upcoming — requests whose shift hasn't ended",
+        "activeRequest(for:) — pending or approved request for a shift",
+        "submit(kind:shift:requested:reason:) → String? error — one active request per shift; a shortened day must fit inside the shift",
+        "withdraw(_:) — pending only"
+      ]
+    },
     "TimeTrackerViewModel": {
       "scheduleChanges": [
         "loadTerms() — reads the user's own employment/terms",
@@ -791,7 +843,7 @@ flowchart TB
         "clockInSnapWindow": "30 min",
         "earlyClockInAllowance": "4 h"
       },
-      "methods": ["shift(on:) → DateInterval?", "shift(containingClockIn:) → DateInterval?"]
+      "methods": ["shift(on:) → DateInterval?", "upcomingShifts(days:now:) → [DateInterval]", "shift(containingClockIn:) → DateInterval?"]
     },
     "WorkDay": { "isWorking": "Bool", "startMinutes": "Int (minutes since midnight)", "endMinutes": "Int" },
     "Weekday": { "cases": ["monday", "…", "sunday"] },
@@ -841,6 +893,17 @@ flowchart TB
         "monthTitle"
       ],
       "static": ["calendar (Pacific)", "monthKey(for:)", "monthStart(forKey:)", "dayKey(for:)"]
+    },
+    "TimeOffRequest": {
+      "file": "Models/TimeOffRequest.swift",
+      "fields": {
+        "kind": "dayOff | shortenedDay",
+        "shiftStart / shiftEnd": "Date — the scheduled shift",
+        "requestedStart / requestedEnd": "Date? — shortenedDay only",
+        "reason": "String",
+        "status": "pending | approved | denied",
+        "createdAt": "Date"
+      }
     },
     "HistoryEntry": { "id": "String", "clockIn": "Date", "clockOut": "Date", "durationFormatted": "String", "report": "String", "computed": ["hours"] },
     "EmployeeEntry": { "id": "String", "name": "String", "isEmployed": "Bool" },
@@ -904,6 +967,23 @@ flowchart TB
         "amount": 3962.5,
         "paidAt": "<serverTimestamp>",
         "paidByEmail": "admin@company.com"
+      }
+    },
+    "users/{uid}/timeOffRequests/{id}": {
+      "readBy": "the employee or a same-company admin",
+      "createBy": "the employee, status must be \"pending\"",
+      "updateBy": "a same-company admin (approve / deny)",
+      "deleteBy": "the employee while pending, or a same-company admin",
+      "example": {
+        "kind": "shortenedDay",
+        "shiftStart": "2026-10-05T16:00:00Z",
+        "shiftEnd": "2026-10-06T00:00:00Z",
+        "requestedStart": "2026-10-05T16:00:00Z",
+        "requestedEnd": "2026-10-05T20:00:00Z",
+        "reason": "Dentist appointment",
+        "status": "pending",
+        "requestedByEmail": "employee@company.com",
+        "createdAt": "<serverTimestamp>"
       }
     },
     "users/{uid}/history/{id}": {

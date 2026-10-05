@@ -120,7 +120,7 @@ struct ReportChatView: View {
     }
 
     private var reportHeader: some View {
-        let parsed = ReportTextLinks.extract(from: report.reportText)
+        let parsed = report.textAndLinks
 
         return VStack(alignment: .leading, spacing: 6) {
             HStack(alignment: .top) {
@@ -132,13 +132,13 @@ struct ReportChatView: View {
                     .font(.system(size: 12))
                     .foregroundColor(AppColors.textSecondary)
             }
-            if !parsed.cleanedText.isEmpty {
-                Text(parsed.cleanedText)
+            if !parsed.text.isEmpty {
+                Text(parsed.text)
                     .font(.system(size: 14))
                     .foregroundColor(AppColors.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            ReportLinksGrid(links: parsed.links)
+            ReportLinkList(links: parsed.links)
         }
         .padding(16)
         .background(AppColors.cardBackground)

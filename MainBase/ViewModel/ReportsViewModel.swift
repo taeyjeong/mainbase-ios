@@ -20,6 +20,8 @@ final class ReportsViewModel: ObservableObject {
     @Published var selectedUserId: String?
     @Published var selectedMonth: Date = MonthGrouping.startOfMonth(for: Date())
     @Published private(set) var currentReportChatMessages: [ReportChatMessage] = []
+    /// Choices for a report's project Main (EditReportSheet) and its tag on each row.
+    @Published private(set) var projectMains: [ProjectMain] = []
 
     private let db = Firestore.firestore()
     private var usersListener: ListenerRegistration?
@@ -28,6 +30,7 @@ final class ReportsViewModel: ObservableObject {
     private var userNames: [String: String] = [:]
     private var userEmojis: [String: String] = [:]
     private var reportChatListener: ListenerRegistration?
+    private var projectMainsListener: ListenerRegistration?
 
     private var currentUserId: String? { Auth.auth().currentUser?.uid }
 
@@ -39,6 +42,14 @@ final class ReportsViewModel: ObservableObject {
     func startListening() {
         guard usersListener == nil else { return }
         isLoading = true
+        projectMainsListener = db.collection("projectMains").addSnapshotListener { [weak self] snapshot, _ in
+            guard let self, let documents = snapshot?.documents else { return }
+            Task { @MainActor [weak self] in
+                self?.projectMains = documents
+                    .map { ProjectMain(id: $0.documentID, data: $0.data()) }
+                    .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+            }
+        }
         usersListener = db.collection("users").addSnapshotListener { [weak self] snapshot, _ in
             guard let self, let snapshot else { return }
             Task { @MainActor [weak self] in
@@ -77,7 +88,8 @@ final class ReportsViewModel: ObservableObject {
                                 reportText: $0.reportText,
                                 timestamp: $0.timestamp,
                                 messageCount: $0.messageCount,
-                                editedAt: $0.editedAt
+                                projectMainId: $0.projectMainId,
+                                links: $0.links
                             )
                         }
                         self.rebuild()
@@ -111,7 +123,8 @@ final class ReportsViewModel: ObservableObject {
                         reportText: reportText,
                         timestamp: ts.dateValue(),
                         messageCount: messageCount,
-                        editedAt: (data["editedAt"] as? Timestamp)?.dateValue()
+                        projectMainId: data["projectMainId"] as? String,
+                        links: ReportLink.list(from: data["links"])
                     )
                 }
                 self.reportsByUser[userId] = entries
@@ -137,25 +150,38 @@ final class ReportsViewModel: ObservableObject {
         report.userId == currentUserId
     }
 
-    /// The owner's edit of their own report. Changes only the text (plus editedAt); the date,
-    /// author and replies stay as they were. Also updates the matching clock-out history entry
-    /// (same clock-out time, or its original time if an admin corrected the shift) so History
-    /// shows the same text. Returns an error message, or nil once saved.
-    func updateReportText(_ report: Report, to text: String) async -> String? {
+    func projectMain(withId id: String?) -> ProjectMain? {
+        guard let id else { return nil }
+        return projectMains.first { $0.id == id }
+    }
+
+    /// The owner's edit of their own report, of any age: its text, its one project Main (nil
+    /// clears it) and its links (`links` are the edit sheet's rows; blank ones are dropped,
+    /// and none left removes the field). No edit time is recorded; the date, author and replies stay as they
+    /// were. A text change also updates the matching clock-out history entry (same clock-out
+    /// time, or its original time if an admin corrected the shift) so History shows the same
+    /// text. Returns an error message, or nil once saved.
+    func updateReport(_ report: Report, text: String, projectMainId: String?, links: [ReportLinkDraft]) async -> String? {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "Your report can't be empty." }
         guard canEdit(report) else { return "You can only edit your own reports." }
-        guard trimmed != report.reportText else { return nil }
+        guard !links.contains(where: \.isInvalid) else { return "Fix or clear the invalid link." }
+        let linkValues = links.compactMap(\.firestoreValue)
+        let textChanged = trimmed != report.reportText
+        let linksChanged = linkValues != report.links.map(\.firestoreValue)
+        guard textChanged || linksChanged || projectMainId != report.projectMainId else { return nil }
 
         let userRef = db.collection("users").document(report.userId)
         do {
             try await userRef.collection("reports").document(report.id).updateData([
                 "reportText": trimmed,
-                "editedAt": FieldValue.serverTimestamp(),
+                "projectMainId": projectMainId ?? FieldValue.delete(),
+                "links": linkValues.isEmpty ? FieldValue.delete() : linkValues,
             ])
         } catch {
             return "Could not save your report right now."
         }
+        guard textChanged else { return nil }
 
         // Best effort: the report is already saved, so a history mismatch shouldn't fail the edit.
         let timestamp = Timestamp(date: report.timestamp)
@@ -165,10 +191,7 @@ final class ReportsViewModel: ObservableObject {
             matches = (try? await history.whereField("originalClockOut", isEqualTo: timestamp).getDocuments())?.documents ?? []
         }
         for doc in matches {
-            try? await doc.reference.updateData([
-                "report": trimmed,
-                "reportEditedAt": FieldValue.serverTimestamp(),
-            ])
+            try? await doc.reference.updateData(["report": trimmed])
         }
         return nil
     }
@@ -219,6 +242,8 @@ final class ReportsViewModel: ObservableObject {
     func stopListening() {
         usersListener?.remove()
         usersListener = nil
+        projectMainsListener?.remove()
+        projectMainsListener = nil
         reportListeners.values.forEach { $0.remove() }
         reportListeners.removeAll()
         reportsByUser.removeAll()

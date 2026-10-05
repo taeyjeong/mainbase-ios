@@ -39,7 +39,7 @@ struct ProjectCategoryPicker: View {
     }
 }
 
-private struct MainSwatchButton: View {
+struct MainSwatchButton: View {
     let main: ProjectMain
     let isSelected: Bool
     let action: () -> Void

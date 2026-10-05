@@ -32,6 +32,7 @@ struct ReportsListView: View {
                         ForEach(vm.reportsForSelectedMonth) { report in
                             ReportRow(
                                 report: report,
+                                projectMain: vm.projectMain(withId: report.projectMainId),
                                 onOpenChat: { chattingReport = report },
                                 onEdit: vm.canEdit(report) ? { editingReport = report } : nil
                             )
@@ -179,6 +180,7 @@ struct ReportsListView: View {
 
 private struct ReportRow: View {
     let report: Report
+    let projectMain: ProjectMain?
     let onOpenChat: () -> Void
     /// Only set for the signed-in user's own reports.
     let onEdit: (() -> Void)?
@@ -196,7 +198,7 @@ private struct ReportRow: View {
     }()
 
     private var formattedTimestamp: String {
-        "\(Self.dateFormatter.string(from: report.timestamp)) · \(Self.timeFormatter.string(from: report.timestamp))\(report.editedAt == nil ? "" : " · edited")"
+        "\(Self.dateFormatter.string(from: report.timestamp)) · \(Self.timeFormatter.string(from: report.timestamp))"
     }
 
     private var displayEmoji: String {
@@ -204,7 +206,7 @@ private struct ReportRow: View {
     }
 
     var body: some View {
-        let parsed = ReportTextLinks.extract(from: report.reportText)
+        let parsed = report.textAndLinks
 
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center) {
@@ -221,14 +223,17 @@ private struct ReportRow: View {
                     .font(.system(size: 12))
                     .foregroundColor(AppColors.textSecondary)
             }
-            if !parsed.cleanedText.isEmpty {
-                Text(parsed.cleanedText)
+            if let projectMain {
+                projectMainTag(projectMain)
+            }
+            if !parsed.text.isEmpty {
+                Text(parsed.text)
                     .font(.system(size: 14))
                     .foregroundColor(AppColors.text)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            ReportLinkList(links: parsed.links)
             HStack(alignment: .bottom) {
-                ReportLinksGrid(links: parsed.links)
                 Spacer(minLength: 8)
                 if let onEdit {
                     editButton(action: onEdit)
@@ -243,6 +248,20 @@ private struct ReportRow: View {
                 .fill(AppColors.cardBackground)
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
         )
+    }
+
+    private func projectMainTag(_ main: ProjectMain) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(Color(hex: main.colorHex))
+                .frame(width: 8, height: 8)
+            Text(main.name)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundColor(AppColors.text)
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Capsule().fill(Color(hex: main.colorHex).opacity(0.12)))
     }
 
     private func editButton(action: @escaping () -> Void) -> some View {

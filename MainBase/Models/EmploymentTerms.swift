@@ -108,6 +108,17 @@ extension EmploymentTerms {
         return DateInterval(start: start, end: end)
     }
 
+    /// Scheduled shifts from today through the next `days - 1` Pacific days that haven't ended
+    /// yet, including one in progress.
+    func upcomingShifts(days: Int, now: Date = Date()) -> [DateInterval] {
+        let calendar = PayoutRecord.calendar
+        let today = calendar.startOfDay(for: now)
+        return (0..<days).compactMap { offset in
+            calendar.date(byAdding: .day, value: offset, to: today).flatMap { shift(on: $0) }
+        }
+        .filter { $0.end > now }
+    }
+
     /// The shift a session starting at `clockIn` belongs to, matching the server's rule.
     func shift(containingClockIn clockIn: Date) -> DateInterval? {
         guard let shift = shift(on: clockIn.addingTimeInterval(Self.earlyClockInAllowance)) ?? shift(on: clockIn)

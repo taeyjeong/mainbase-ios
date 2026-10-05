@@ -29,38 +29,46 @@ enum ReportTextLinks {
     }
 }
 
-struct ReportLinkChip: View {
-    let link: ExtractedLink
-
-    var body: some View {
-        Link(destination: link.url) {
-            Image(systemName: link.platform.iconName)
-                .font(.system(size: 16, weight: .medium))
-                .foregroundColor(link.platform.tintColor)
-                .frame(width: 36, height: 36)
-                .background(AppColors.cardBackground)
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(AppColors.border, lineWidth: 1)
-                )
-        }
-        .accessibilityLabel(link.platform.label)
-    }
-}
-
-struct ReportLinksGrid: View {
-    let links: [ExtractedLink]
-
-    private let columns = [GridItem(.adaptive(minimum: 36), spacing: 8)]
+/// A report's links, one per line: the platform icon on the left (Doc, Sheet, Slides, PDF, or a
+/// globe for websites) and the description on the right.
+struct ReportLinkList: View {
+    let links: [ReportLink]
 
     var body: some View {
         if !links.isEmpty {
-            LazyVGrid(columns: columns, alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 ForEach(links) { link in
-                    ReportLinkChip(link: link)
+                    ReportLinkRow(link: link)
                 }
             }
         }
+    }
+}
+
+private struct ReportLinkRow: View {
+    let link: ReportLink
+
+    var body: some View {
+        Link(destination: link.url) {
+            HStack(spacing: 10) {
+                Image(systemName: link.platform.iconName)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(link.platform.tintColor)
+                    .frame(width: 30, height: 30)
+                    .background(AppColors.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(AppColors.border, lineWidth: 1)
+                    )
+                Text(link.displayText)
+                    .font(.system(size: 14))
+                    .foregroundColor(AppColors.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .accessibilityLabel("\(link.platform.label): \(link.displayText)")
     }
 }

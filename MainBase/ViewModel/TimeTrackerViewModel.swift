@@ -108,7 +108,10 @@ final class TimeTrackerViewModel: ObservableObject {
         return shift.start
     }
 
-    func clockOut(report: String) async {
+    /// `links` are the clock-out sheet's link rows as the report's `links` entries
+    /// (ReportLinkDraft.firestoreValue). `projectMainId` is the one project Main picked for the
+    /// report, if any.
+    func clockOut(report: String, links: [[String: Any]] = [], projectMainId: String? = nil) async {
         guard let uid = userId, let start = clockInTime else { return }
         let trimmedReport = report.trimmingCharacters(in: .whitespaces)
         guard !trimmedReport.isEmpty else { return }
@@ -134,10 +137,17 @@ final class TimeTrackerViewModel: ObservableObject {
                 "createdAt": Timestamp(date: now)
             ])
             if !trimmedReport.isEmpty {
-                try await db.collection("users").document(uid).collection("reports").addDocument(data: [
+                var reportData: [String: Any] = [
                     "reportText": trimmedReport,
                     "timestamp": Timestamp(date: now)
-                ])
+                ]
+                if !links.isEmpty {
+                    reportData["links"] = links
+                }
+                if let projectMainId {
+                    reportData["projectMainId"] = projectMainId
+                }
+                try await db.collection("users").document(uid).collection("reports").addDocument(data: reportData)
             }
             await notifyClockEvent(action: .clockOut, report: trimmedReport)
         } catch {}

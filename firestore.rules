@@ -93,6 +93,21 @@ service cloud.firestore {
         allow write: if isSameCompanyAdmin(userId);
       }
 
+      // Day-off / shortened-day requests (TimeOffRequestsViewModel). The employee creates their
+      // own as pending and may withdraw one while it's still pending; only an admin in their
+      // company may answer (approve/deny) it.
+      match /timeOffRequests/{requestId} {
+        allow read: if isOwner(userId) || isSameCompanyAdmin(userId);
+        allow create: if isOwner(userId)
+          && request.resource.data.status == 'pending'
+          && request.resource.data.kind in ['dayOff', 'shortenedDay']
+          && request.resource.data.keys().hasOnly(['kind', 'shiftStart', 'shiftEnd', 'requestedStart',
+               'requestedEnd', 'reason', 'status', 'createdAt', 'requestedByEmail']);
+        allow update: if isSameCompanyAdmin(userId);
+        allow delete: if isSameCompanyAdmin(userId)
+          || (isOwner(userId) && resource.data.status == 'pending');
+      }
+
       match /history/{historyId} {
         allow read: if isOwner(userId) || isAdmin();
         allow create: if isOwner(userId);
@@ -108,9 +123,9 @@ service cloud.firestore {
               || (request.resource.data.originalClockIn == resource.data.originalClockIn
                   && request.resource.data.originalClockOut == resource.data.originalClockOut));
         // The employee may change only the report text, mirroring an edit of their report
-        // (ReportsViewModel.updateReportText); never the times.
+        // (ReportsViewModel.updateReport); never the times.
         allow update: if isOwner(userId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['report', 'reportEditedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['report'])
           && request.resource.data.report is string
           && request.resource.data.report.size() > 0;
         allow delete: if false;
@@ -120,12 +135,17 @@ service cloud.firestore {
         // ReportsListView is visible to any clocked-in user, not just admins,
         // and reads every user's reports.
         allow read: if isSignedIn();
-        allow create: if isOwner(userId);
-        // The owner may edit their report's text (EditReportSheet), and nothing else.
+        // A report names at most one project Main (projectMainId, a single id).
+        allow create: if isOwner(userId)
+          && (!('projectMainId' in request.resource.data) || request.resource.data.projectMainId is string);
+        // The owner may edit their report's text, project Main and links (EditReportSheet), and
+        // nothing else. No edit time is recorded.
         allow update: if isOwner(userId)
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportText', 'editedAt'])
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['reportText', 'projectMainId', 'links'])
           && request.resource.data.reportText is string
-          && request.resource.data.reportText.size() > 0;
+          && request.resource.data.reportText.size() > 0
+          && (!('projectMainId' in request.resource.data) || request.resource.data.projectMainId is string)
+          && (!('links' in request.resource.data) || request.resource.data.links is list);
         allow delete: if false;
 
         // Any signed-in user can read a report's chat and post messages;

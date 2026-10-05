@@ -17,6 +17,8 @@ struct TimeTrackerView: View {
     @State private var showingSchedule = false
     @State private var showClockOutModal = false
     @State private var clockOutReport = ""
+    @State private var clockOutProjectMainId: String?
+    @State private var clockOutLinks = [ReportLinkDraft()]
     @State private var showEmptyReportAlert = false
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
@@ -76,10 +78,17 @@ struct TimeTrackerView: View {
         .sheet(isPresented: $showClockOutModal) {
             ClockOutSheetView(
                 report: $clockOutReport,
+                links: $clockOutLinks,
+                projectMainId: $clockOutProjectMainId,
+                projectMains: projectsVM.projectMains.sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+                },
                 completedTasks: completedTasksToday,
                 onCancel: {
                     showClockOutModal = false
                     clockOutReport = ""
+                    clockOutProjectMainId = nil
+                    clockOutLinks = [ReportLinkDraft()]
                 },
                 onSubmit: handleSubmitClockOut
             )
@@ -227,9 +236,14 @@ struct TimeTrackerView: View {
             showEmptyReportAlert = true
             return
         }
+        guard !clockOutLinks.contains(where: \.isInvalid) else { return }
+        let projectMainId = clockOutProjectMainId
+        let links = clockOutLinks.compactMap(\.firestoreValue)
         showClockOutModal = false
         clockOutReport = ""
-        Task { await vm.clockOut(report: report) }
+        clockOutProjectMainId = nil
+        clockOutLinks = [ReportLinkDraft()]
+        Task { await vm.clockOut(report: report, links: links, projectMainId: projectMainId) }
     }
 }
 
