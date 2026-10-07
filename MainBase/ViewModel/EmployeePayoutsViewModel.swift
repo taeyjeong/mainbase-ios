@@ -154,6 +154,7 @@ final class EmployeePayoutsViewModel: ObservableObject {
             id: key,
             payType: wage?.payType ?? .hourly,
             rate: wage?.rate,
+            currency: wage?.currency ?? .usd,
             hoursWorked: hoursByMonth[key] ?? 0
         )
     }
@@ -171,6 +172,7 @@ final class EmployeePayoutsViewModel: ObservableObject {
         paid.deduction = deduction
         paid.note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         paid.paidAt = Date()
+        paid.usdRate = ExchangeRates.shared.perDollar[paid.currency]
 
         var data = paid.firestoreData
         data["paidAt"] = FieldValue.serverTimestamp()

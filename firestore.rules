@@ -61,10 +61,13 @@ service cloud.firestore {
       match /employment/{docId} {
         allow read: if isOwner(userId) || isSameCompanyAdmin(userId);
         allow write: if isSameCompanyAdmin(userId);
+        // The employee may set their own schedule and its time zone (EditMyScheduleSheet).
         allow create: if isOwner(userId) && docId == 'terms'
-          && request.resource.data.keys().hasOnly(['schedule', 'updatedAt', 'updatedByEmail']);
+          && request.resource.data.keys().hasOnly(['schedule', 'timeZone', 'updatedAt', 'updatedByEmail'])
+          && (!('timeZone' in request.resource.data) || request.resource.data.timeZone is string);
         allow update: if isOwner(userId) && docId == 'terms'
-          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['schedule', 'updatedAt', 'updatedByEmail']);
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['schedule', 'timeZone', 'updatedAt', 'updatedByEmail'])
+          && (!('timeZone' in request.resource.data) || request.resource.data.timeZone is string);
       }
 
       // Gemini-written monthly summaries the employee chose to save (MonthlySummaryViewModel).

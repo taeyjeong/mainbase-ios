@@ -2,7 +2,7 @@ import SwiftUI
 
 /// The "Add Diagram" picker: lists all six diagram kinds with their icon, title, and blurb.
 /// Tapping a kind opens a full-screen sample of what that kind looks like — the same view
-/// rendered on the Operations tab, fully pannable and pinch-zoomable. The "Create" button on that
+/// rendered on the Operations screen, fully pannable and pinch-zoomable. The "Create" button on that
 /// preview is disabled for now — none of these kinds has an MVVM/data layer wired up yet in
 /// MainBase, so this flow previews the picker + sample UI only, not a working creation flow.
 struct AddDiagramFlowSheet: View {
@@ -66,7 +66,7 @@ struct AddDiagramFlowSheet: View {
     }
 }
 
-/// Full-screen sample of one diagram kind — the same view rendered on the Operations tab, so it's
+/// Full-screen sample of one diagram kind — the same view rendered on the Operations screen, so it's
 /// pannable and pinch-zoomable via that view's own zoom controls. The "Create" bar at the bottom is
 /// a preview of where a creation flow will eventually go; it's disabled until that kind has an
 /// MVVM/data layer behind it.

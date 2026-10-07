@@ -2,10 +2,15 @@ import SwiftUI
 
 /// Card for editing a weekly schedule, with the week's total scheduled hours. Shared by the
 /// admin's EmployeeDetailView and the employee's own EditMyScheduleSheet. Times are wall-clock
-/// times in US Pacific (EmploymentTerms.scheduleTimeZone), so the pickers run in a fixed GMT
-/// calendar to avoid shifting by the editor's own zone.
+/// times in the schedule's own zone (picked here, EmploymentTerms.timeZoneId), so the pickers
+/// run in a fixed GMT calendar to avoid shifting by the editor's own zone.
 struct WeeklyScheduleEditor: View {
     @Binding var schedule: [Weekday: WorkDay]
+    @Binding var timeZoneId: String
+
+    @State private var isPickingTimeZone = false
+
+    private var timeZone: TimeZone { TimeZone(identifier: timeZoneId) ?? EmploymentTerms.defaultTimeZone }
 
     private static let pickerTimeZone = TimeZone(identifier: "GMT")!
 
@@ -22,7 +27,26 @@ struct WeeklyScheduleEditor: View {
             }
             .padding(.bottom, 4)
 
-            Text("All times are Pacific Time (US).")
+            Button {
+                isPickingTimeZone = true
+            } label: {
+                HStack {
+                    Text("Time zone")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(AppColors.text)
+                    Spacer()
+                    Text(timeZone.cityName)
+                        .font(.system(size: 14))
+                        .foregroundColor(AppColors.primary)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundColor(AppColors.textSecondary)
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 8)
+
+            Text("All times are \(timeZone.scheduleDisplayName).")
                 .font(.system(size: 12))
                 .foregroundColor(AppColors.textSecondary)
                 .padding(.bottom, 16)
@@ -41,6 +65,9 @@ struct WeeklyScheduleEditor: View {
                 .fill(AppColors.cardBackground)
                 .overlay(RoundedRectangle(cornerRadius: 16).stroke(AppColors.border, lineWidth: 1))
         )
+        .sheet(isPresented: $isPickingTimeZone) {
+            TimeZonePickerSheet(selectedId: $timeZoneId)
+        }
     }
 
     private func dayRow(_ day: Weekday) -> some View {

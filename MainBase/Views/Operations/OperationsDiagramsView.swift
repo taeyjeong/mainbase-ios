@@ -1,59 +1,57 @@
 import SwiftUI
 
 // MARK: - ⚠️ MOCK DATA REMINDER
-// This Operations tab (this file plus DiagramSupport, WorkflowAutomationDiagram,
+// This Operations screen (this file plus DiagramSupport, WorkflowAutomationDiagram,
 // UserFlowDiagram, and DatabaseDesignDiagram) was copied over from the Meili app. Every
 // diagram here renders STATIC SAMPLE DATA — see the `WorkflowSample`, `UserFlowSample`, and
 // `SchemaSample` enums in the sibling files. Real MainBase data will replace these mocks later;
 // swap those sample enums for live data sources when that work happens.
 
-/// The Operations tab. Hosts three connected-line diagrams — a workflow automation graph, an app
+/// The Operations screen, pushed from AdminToolsView. Hosts three connected-line diagrams — a workflow automation graph, an app
 /// user flow, and a database schema — switched between with a segmented picker. Each diagram is
 /// static sample data that draws its own nodes and routes connectors between them.
 struct OperationsDiagramsView: View {
-    /// The Operations tab's segmented picker is kept to these three for now — the other three
+    /// The Operations screen's segmented picker is kept to these three for now — the other three
     /// (Team Collaboration Graph, Feature Tree, Roadmap Tree) render sample data too, but only
-    /// via the "Add Diagram" picker's preview until they're worth a permanent tab here.
+    /// via the "Add Diagram" picker's preview until they're worth a permanent spot here.
     private static let implementedKinds: [OperationsDiagramKind] = [.workflow, .userFlow, .database]
 
     @State private var selection: OperationsDiagramKind = .workflow
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                Picker("View", selection: $selection) {
-                    ForEach(Self.implementedKinds) { kind in
-                        Text(kind.title).tag(kind)
-                    }
+        VStack(spacing: 0) {
+            Picker("View", selection: $selection) {
+                ForEach(Self.implementedKinds) { kind in
+                    Text(kind.title).tag(kind)
                 }
-                .pickerStyle(.segmented)
-                .padding(.horizontal, 20)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
-
-                Divider().overlay(AppColors.border)
-
-                Group {
-                    switch selection {
-                    case .workflow: WorkflowAutomationDiagram()
-                    case .userFlow: UserFlowDiagram()
-                    case .database: DatabaseDesignDiagram()
-                    case .teamGraph: TeamCollaborationGraph()
-                    case .featureTree: FeatureTreeDiagram()
-                    case .roadmapTree: RoadmapTreeDiagram()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-            .background(AppColors.background.ignoresSafeArea())
-            .navigationTitle("Operations")
-            .navigationBarTitleDisplayMode(.inline)
+            .pickerStyle(.segmented)
+            .padding(.horizontal, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 8)
+
+            Divider().overlay(AppColors.border)
+
+            Group {
+                switch selection {
+                case .workflow: WorkflowAutomationDiagram()
+                case .userFlow: UserFlowDiagram()
+                case .database: DatabaseDesignDiagram()
+                case .teamGraph: TeamCollaborationGraph()
+                case .featureTree: FeatureTreeDiagram()
+                case .roadmapTree: RoadmapTreeDiagram()
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .background(AppColors.background.ignoresSafeArea())
+        .navigationTitle("Operations")
+        .navigationBarTitleDisplayMode(.inline)
     }
 }
 
 /// The six diagram kinds offered when creating a project diagram. Only `workflow`, `userFlow`,
-/// and `database` have a working view (rendered on the Operations tab); the other three are
+/// and `database` have a working view (rendered on the Operations screen); the other three are
 /// listed in the "Add Diagram" picker but not yet buildable — see `AddDiagramFlowSheet`.
 enum OperationsDiagramKind: String, CaseIterable, Identifiable {
     case workflow

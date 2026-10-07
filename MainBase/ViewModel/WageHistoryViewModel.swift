@@ -46,6 +46,7 @@ final class WageHistoryViewModel: ObservableObject {
             id: history.effectiveMonth(),
             payType: payType,
             rate: rate,
+            currency: .usd,
             changedAt: (data["updatedAt"] as? Timestamp)?.dateValue() ?? Date(),
             changedByEmail: data["updatedByEmail"] as? String ?? ""
         )
@@ -54,14 +55,14 @@ final class WageHistoryViewModel: ObservableObject {
     }
 
     /// Logs a new wage starting per WageHistory's rules. Returns true if it was saved.
-    func logNewWage(payType: PayType, rate: Double?) async -> Bool {
+    func logNewWage(payType: PayType, rate: Double?, currency: PayCurrency) async -> Bool {
         guard let rate, rate > 0 else {
             alertMessage = "Enter the new \(payType.rateLabel.lowercased())."
             return false
         }
         let now = Date()
         let latest = history.upcoming(now: now) ?? history.current(now: now)
-        if let latest, latest.payType == payType, latest.rate == rate {
+        if let latest, latest.payType == payType, latest.rate == rate, latest.currency == currency {
             alertMessage = "That's already the wage from \(latest.effectiveDateText)."
             return false
         }
@@ -70,6 +71,7 @@ final class WageHistoryViewModel: ObservableObject {
             id: history.effectiveMonth(forChangeAt: now),
             payType: payType,
             rate: rate,
+            currency: currency,
             changedAt: now,
             changedByEmail: Auth.auth().currentUser?.email ?? ""
         )

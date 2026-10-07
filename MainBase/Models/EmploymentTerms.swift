@@ -8,8 +8,8 @@ enum Weekday: String, CaseIterable, Identifiable {
     var displayName: String { rawValue.capitalized }
 }
 
-/// One day of an employee's weekly schedule. Times are minutes since midnight in
-/// EmploymentTerms.scheduleTimeZone (US Pacific).
+/// One day of an employee's weekly schedule. Times are minutes since midnight in the
+/// schedule's own time zone (EmploymentTerms.timeZone).
 struct WorkDay: Equatable {
     var isWorking: Bool
     var startMinutes: Int
@@ -26,7 +26,7 @@ struct WorkDay: Equatable {
 }
 
 /// Pay notes and weekly schedule for one employee, stored at users/{uid}/employment/terms and
-/// set only by an admin. Kept off the user doc because that doc is readable by every signed-in
+/// set by an admin (the employee may edit only the schedule and its time zone). Kept off the user doc because that doc is readable by every signed-in
 /// user and writable by its owner. The wage itself is logged separately (WageChange).
 struct EmploymentTerms {
     /// Free-form admin notes about pay (raises, bonuses, overtime terms, …).
@@ -34,11 +34,17 @@ struct EmploymentTerms {
     var schedule: [Weekday: WorkDay] = Dictionary(uniqueKeysWithValues: Weekday.allCases.map { day in
         (day, day == .saturday || day == .sunday ? WorkDay.off : WorkDay.standard)
     })
+    /// IANA identifier of the zone the schedule's times are in, e.g. "Asia/Tokyo".
+    var timeZoneId: String = EmploymentTerms.defaultTimeZone.identifier
 
     init() {}
 
     init(data: [String: Any]) {
         payNotes = data["payNotes"] as? String ?? ""
+        // Schedules saved before per-employee zones have no timeZone and stay Pacific.
+        if let id = data["timeZone"] as? String, TimeZone(identifier: id) != nil {
+            timeZoneId = id
+        }
         if let scheduleData = data["schedule"] as? [String: [String: Any]] {
             for day in Weekday.allCases {
                 guard let dayData = scheduleData[day.rawValue] else { continue }
@@ -64,16 +70,28 @@ struct EmploymentTerms {
         return [
             "payNotes": payNotes.trimmingCharacters(in: .whitespacesAndNewlines),
             "schedule": scheduleData,
+            "timeZone": timeZoneId,
         ]
     }
 }
 
 extension EmploymentTerms {
-    /// Every schedule is set, stored and enforced in US Pacific time, for all employees.
-    /// Mirrors SCHEDULE_TIME_ZONE in functions/scheduleTime.js. ScheduleView shows an employee
-    /// their shifts converted to the device's time zone (e.g. a 9:00 AM Pacific start shows as
-    /// 1:00 AM the next day in Korea); the admin schedule editor keeps showing Pacific.
-    static let scheduleTimeZone = TimeZone(identifier: "America/Los_Angeles")!
+    /// The zone of a schedule saved without one (all schedules from before per-employee zones),
+    /// and the default for a new schedule. Mirrors DEFAULT_SCHEDULE_TIME_ZONE in
+    /// functions/scheduleTime.js. Pay days and months are always Pacific (PayoutRecord.calendar).
+    static let defaultTimeZone = TimeZone(identifier: "America/Los_Angeles")!
+
+    /// Each schedule is set, stored and enforced in its own zone, so a 9:00 AM Tokyo start stays
+    /// 9:00 AM Tokyo through US daylight saving changes. ScheduleView shows the shifts converted
+    /// to the device's zone, which differs only when the employee is away from it.
+    var timeZone: TimeZone { TimeZone(identifier: timeZoneId) ?? Self.defaultTimeZone }
+
+    /// The schedule's own calendar, whose days are the schedule's days.
+    var calendar: Calendar {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = timeZone
+        return calendar
+    }
 
     /// A clock-in within this long after the scheduled start is recorded as the scheduled start.
     static let clockInSnapWindow: TimeInterval = 30 * 60
@@ -96,8 +114,7 @@ extension EmploymentTerms {
 
     /// The scheduled shift on the schedule-local day containing `date`, or nil on a day off.
     func shift(on date: Date) -> DateInterval? {
-        var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = Self.scheduleTimeZone
+        let calendar = calendar
         // Calendar weekday is 1 = Sunday ... 7 = Saturday.
         let weekdays: [Weekday] = [.sunday, .monday, .tuesday, .wednesday, .thursday, .friday, .saturday]
         let day = weekdays[calendar.component(.weekday, from: date) - 1]
@@ -108,10 +125,10 @@ extension EmploymentTerms {
         return DateInterval(start: start, end: end)
     }
 
-    /// Scheduled shifts from today through the next `days - 1` Pacific days that haven't ended
-    /// yet, including one in progress.
+    /// Scheduled shifts from today through the next `days - 1` days in the schedule's zone that
+    /// haven't ended yet, including one in progress.
     func upcomingShifts(days: Int, now: Date = Date()) -> [DateInterval] {
-        let calendar = PayoutRecord.calendar
+        let calendar = calendar
         let today = calendar.startOfDay(for: now)
         return (0..<days).compactMap { offset in
             calendar.date(byAdding: .day, value: offset, to: today).flatMap { shift(on: $0) }

@@ -12,8 +12,9 @@ struct MarkPaidSheet: View {
     @State private var note = ""
     @State private var isSaving = false
     @State private var errorMessage: String?
+    @ObservedObject private var rates = ExchangeRates.shared
 
-    private static let currencyFormat = FloatingPointFormatStyle<Double>.Currency(code: "USD")
+    private var currencyFormat: FloatingPointFormatStyle<Double>.Currency { record.currency.format }
 
     private var bonus: Double { Double(bonusText) ?? 0 }
     private var deduction: Double { Double(deductionText) ?? 0 }
@@ -29,20 +30,20 @@ struct MarkPaidSheet: View {
         NavigationStack {
             ScrollView(showsIndicators: false) {
                 VStack(alignment: .leading, spacing: 16) {
-                    summaryRow("Base pay", record.basePay?.formatted(Self.currencyFormat) ?? "—")
+                    summaryRow("Base pay", record.basePay?.formatted(currencyFormat) ?? "—", dollars: rates.dollarsText(record.basePay, in: record.currency))
                     Text(baseDetail)
                         .font(.system(size: 12))
                         .foregroundColor(AppColors.textSecondary)
 
                     Divider()
 
-                    AmountField(title: "Bonus", text: $bonusText)
-                    AmountField(title: "Deduction", text: $deductionText)
+                    AmountField(title: "Bonus", text: $bonusText, symbol: record.currency.symbol)
+                    AmountField(title: "Deduction", text: $deductionText, symbol: record.currency.symbol)
                     NotesField(title: "Note", placeholder: "Why the bonus or deduction, payment method…", text: $note)
 
                     Divider()
 
-                    summaryRow("Total", total?.formatted(Self.currencyFormat) ?? "—", emphasized: true)
+                    summaryRow("Total", total?.formatted(currencyFormat) ?? "—", dollars: rates.dollarsText(total, in: record.currency), emphasized: true)
                     if let total, total < 0 {
                         Text("The deduction is larger than the base pay plus bonus.")
                             .font(.system(size: 12))
@@ -91,21 +92,29 @@ struct MarkPaidSheet: View {
         let hours = record.hoursWorked.formatted(.number.precision(.fractionLength(0...1)))
         switch record.payType {
         case .hourly:
-            return "\(hours) hrs × \(record.rate?.formatted(Self.currencyFormat) ?? "—") / hour"
+            return "\(hours) hrs × \(record.rate?.formatted(currencyFormat) ?? "—") / hour"
         case .salary:
             return "Monthly salary · \(hours) hrs worked"
         }
     }
 
-    private func summaryRow(_ label: String, _ value: String, emphasized: Bool = false) -> some View {
-        HStack {
+    /// `dollars` is the "≈ $…" figure shown under a non-USD value (ExchangeRates).
+    private func summaryRow(_ label: String, _ value: String, dollars: String? = nil, emphasized: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline) {
             Text(label)
                 .font(.system(size: 14))
                 .foregroundColor(AppColors.textSecondary)
             Spacer()
-            Text(value)
-                .font(.system(size: emphasized ? 18 : 14, weight: emphasized ? .semibold : .medium))
-                .foregroundColor(AppColors.text)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(value)
+                    .font(.system(size: emphasized ? 18 : 14, weight: emphasized ? .semibold : .medium))
+                    .foregroundColor(AppColors.text)
+                if let dollars {
+                    Text(dollars)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.textSecondary)
+                }
+            }
         }
     }
 

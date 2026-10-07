@@ -5,7 +5,7 @@ const { onDocumentCreated, onDocumentWritten } = require("firebase-functions/v2/
 const { onCall, HttpsError } = require("firebase-functions/v2/https");
 const { onSchedule } = require("firebase-functions/v2/scheduler");
 const { logger } = require("firebase-functions");
-const { recentShifts, SCHEDULE_TIME_ZONE } = require("./scheduleTime");
+const { recentShifts, DEFAULT_SCHEDULE_TIME_ZONE } = require("./scheduleTime");
 
 initializeApp();
 
@@ -589,7 +589,7 @@ exports.summarizeMonth = onCall({ timeoutSeconds: 120 }, async (request) => {
     .map((data) => {
       const day =
         data.timestamp?.toDate?.().toLocaleDateString("en-US", {
-          timeZone: SCHEDULE_TIME_ZONE,
+          timeZone: DEFAULT_SCHEDULE_TIME_ZONE,
           weekday: "short",
           month: "short",
           day: "numeric",
@@ -619,8 +619,8 @@ exports.summarizeMonth = onCall({ timeoutSeconds: 120 }, async (request) => {
 });
 
 // ---------------- scheduled clock enforcement ----------------
-// Timing is measured from the admin-set schedule (users/{uid}/employment/terms), always in US
-// Pacific time (SCHEDULE_TIME_ZONE in scheduleTime.js). The app
+// Timing is measured from the schedule (users/{uid}/employment/terms), in the schedule's own
+// time zone (its `timeZone`, Pacific if unset; see scheduleTime.js). The app
 // separately snaps a clock-in made within 30 minutes of the scheduled start back to the
 // start (TimeTrackerViewModel.clockIn).
 const CLOCK_IN_REMINDER_DELAY_MS = 15 * 60 * 1000; // after scheduled start

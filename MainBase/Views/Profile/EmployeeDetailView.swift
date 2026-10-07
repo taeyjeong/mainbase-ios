@@ -11,10 +11,10 @@ struct EmployeeDetailView: View {
 
     @State private var newWageType: PayType = .hourly
     @State private var newWageText = ""
+    @State private var newWageCurrency: PayCurrency = .usd
     @State private var showLogWageConfirm = false
     @State private var payoutToMarkPaid: PayoutRecord?
-
-    private static let currencyFormat = FloatingPointFormatStyle<Double>.Currency(code: "USD")
+    @ObservedObject private var rates = ExchangeRates.shared
 
     init(employee: EmployeeEntry) {
         self.employee = employee
@@ -48,10 +48,14 @@ struct EmployeeDetailView: View {
         .task {
             async let payouts: Void = payoutsVM.load()
             async let wages: Void = wageVM.load()
+            async let exchangeRates: Void = rates.load()
             await termsVM.load()
             await wages
             await payouts
-            newWageType = (wageVM.history.upcoming() ?? wageVM.history.current())?.payType ?? .hourly
+            await exchangeRates
+            let latest = wageVM.history.upcoming() ?? wageVM.history.current()
+            newWageType = latest?.payType ?? .hourly
+            newWageCurrency = latest?.currency ?? .usd
         }
         .alert("Pay & Schedule", isPresented: Binding(
             get: { termsVM.alertMessage != nil },
@@ -131,6 +135,11 @@ struct EmployeeDetailView: View {
             Text(change.summary)
                 .font(.system(size: 15, weight: .semibold))
                 .foregroundColor(AppColors.text)
+            if let dollars = rates.dollarsText(change.rate, in: change.currency) {
+                Text("\(dollars) \(change.payType.rateUnit) today")
+                    .font(.system(size: 12))
+                    .foregroundColor(AppColors.textSecondary)
+            }
             Text(caption)
                 .font(.system(size: 12))
                 .foregroundColor(AppColors.textSecondary)
@@ -143,7 +152,7 @@ struct EmployeeDetailView: View {
             return "This is the first wage. It applies right away, including earlier months."
         }
         let month = wageVM.history.effectiveMonth()
-        let start = WageChange(id: month, payType: newWageType, rate: 0, changedAt: Date(), changedByEmail: "").effectiveDateText
+        let start = WageChange(id: month, payType: newWageType, rate: 0, currency: newWageCurrency, changedAt: Date(), changedByEmail: "").effectiveDateText
         if wageVM.history.upcoming() != nil {
             return "Starts \(start), replacing the upcoming change."
         }
@@ -163,7 +172,27 @@ struct EmployeeDetailView: View {
             }
             .pickerStyle(.segmented)
 
-            AmountField(title: newWageType.rateLabel, text: $newWageText, unit: newWageType.rateUnit)
+            HStack {
+                Text("Currency")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(AppColors.text)
+                Spacer()
+                Picker("Currency", selection: $newWageCurrency) {
+                    ForEach(PayCurrency.allCases) { currency in
+                        Text(currency.displayName).tag(currency)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(AppColors.primary)
+            }
+
+            AmountField(title: newWageType.rateLabel, text: $newWageText, unit: newWageType.rateUnit, symbol: newWageCurrency.symbol)
+
+            if let dollars = rates.dollarsText(Double(newWageText), in: newWageCurrency) {
+                Text("\(dollars) \(newWageType.rateUnit) at today's rate")
+                    .font(.system(size: 12))
+                    .foregroundColor(AppColors.textSecondary)
+            }
 
             Text(newWageStartText)
                 .font(.system(size: 12))
@@ -188,13 +217,13 @@ struct EmployeeDetailView: View {
             .disabled(wageVM.isSaving || Double(newWageText) == nil)
             .opacity(Double(newWageText) == nil ? 0.5 : 1)
             .confirmationDialog(
-                "Log \(newWageType.displayName.lowercased()) wage of \(Double(newWageText)?.formatted(Self.currencyFormat) ?? "") \(newWageType.rateUnit)?",
+                "Log \(newWageType.displayName.lowercased()) wage of \(Double(newWageText)?.formatted(newWageCurrency.format) ?? "") \(newWageType.rateUnit)?",
                 isPresented: $showLogWageConfirm,
                 titleVisibility: .visible
             ) {
                 Button("Log Wage") {
                     Task {
-                        if await wageVM.logNewWage(payType: newWageType, rate: Double(newWageText)) {
+                        if await wageVM.logNewWage(payType: newWageType, rate: Double(newWageText), currency: newWageCurrency) {
                             newWageText = ""
                         }
                     }
@@ -213,7 +242,7 @@ struct EmployeeDetailView: View {
                 .foregroundColor(AppColors.text)
             ForEach(wageVM.history.changes.reversed()) { change in
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("\(change.effectiveDateText) · \(change.summary)")
+                    Text("\(change.effectiveDateText) · \(change.summary)" + (rates.dollarsText(change.rate, in: change.currency).map { " (\($0))" } ?? ""))
                         .font(.system(size: 13, weight: .medium))
                         .foregroundColor(AppColors.text)
                     Text(historyCaption(change))
@@ -300,9 +329,14 @@ struct EmployeeDetailView: View {
             }
             .buttonStyle(.plain)
             VStack(alignment: .trailing, spacing: 4) {
-                Text(record.amount?.formatted(Self.currencyFormat) ?? "—")
+                Text(record.amount?.formatted(record.currency.format) ?? "—")
                     .font(.system(size: 14, weight: .semibold))
                     .foregroundColor(AppColors.text)
+                if let dollars = rates.dollarsText(record.amount, in: record.currency, rate: record.usdRate) {
+                    Text(dollars)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.textSecondary)
+                }
                 if let paidAt = record.paidAt {
                     Menu {
                         Button("Mark as Unpaid", role: .destructive) {
@@ -329,7 +363,7 @@ struct EmployeeDetailView: View {
         switch record.payType {
         case .hourly:
             guard let rate = record.rate else { return "\(hours) hrs · no wage logged" }
-            detail = "\(hours) hrs × \(rate.formatted(Self.currencyFormat))"
+            detail = "\(hours) hrs × \(rate.formatted(record.currency.format))"
         case .salary:
             detail = record.rate == nil ? "\(hours) hrs · no wage logged" : "\(hours) hrs · monthly salary"
         }
@@ -341,7 +375,7 @@ struct EmployeeDetailView: View {
     // MARK: - Schedule
 
     private var scheduleSection: some View {
-        WeeklyScheduleEditor(schedule: $termsVM.terms.schedule)
+        WeeklyScheduleEditor(schedule: $termsVM.terms.schedule, timeZoneId: $termsVM.terms.timeZoneId)
     }
 
     private var saveButton: some View {

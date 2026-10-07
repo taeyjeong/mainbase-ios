@@ -15,6 +15,12 @@ struct PayoutRecord: Identifiable {
     let payType: PayType
     /// Hourly rate or monthly salary in effect that month; nil if no wage has been logged.
     let rate: Double?
+    /// The currency of that month's wage; every amount on the record is in it.
+    let currency: PayCurrency
+    /// Units of `currency` per US dollar when the month was marked paid, so its dollar figure
+    /// doesn't move with later rates (ExchangeRates). nil until paid, and for months paid before
+    /// this was recorded, which use today's rate.
+    var usdRate: Double?
     let hoursWorked: Double
     /// Added on top of base pay when marking paid.
     var bonus: Double = 0
@@ -44,10 +50,11 @@ struct PayoutRecord: Identifiable {
         return Self.titleFormatter.string(from: monthStart)
     }
 
-    init(id: String, payType: PayType, rate: Double?, hoursWorked: Double) {
+    init(id: String, payType: PayType, rate: Double?, currency: PayCurrency, hoursWorked: Double) {
         self.id = id
         self.payType = payType
         self.rate = rate
+        self.currency = currency
         self.hoursWorked = hoursWorked
     }
 
@@ -55,6 +62,8 @@ struct PayoutRecord: Identifiable {
         self.id = id
         payType = (data["payType"] as? String).flatMap(PayType.init(rawValue:)) ?? .hourly
         rate = (data["rate"] as? NSNumber)?.doubleValue
+        currency = PayCurrency(code: data["currency"] as? String)
+        usdRate = (data["usdRate"] as? NSNumber)?.doubleValue
         hoursWorked = (data["hoursWorked"] as? NSNumber)?.doubleValue ?? 0
         bonus = (data["bonus"] as? NSNumber)?.doubleValue ?? 0
         deduction = (data["deduction"] as? NSNumber)?.doubleValue ?? 0
@@ -66,6 +75,8 @@ struct PayoutRecord: Identifiable {
         [
             "payType": payType.rawValue,
             "rate": rate as Any? ?? NSNull(),
+            "currency": currency.rawValue,
+            "usdRate": usdRate as Any? ?? NSNull(),
             "hoursWorked": hoursWorked,
             "basePay": basePay as Any? ?? NSNull(),
             "bonus": bonus,
@@ -77,10 +88,10 @@ struct PayoutRecord: Identifiable {
 }
 
 extension PayoutRecord {
-    /// Months are Pacific months, matching EmploymentTerms.scheduleTimeZone.
+    /// Pay days and months are US Pacific for every employee, whatever their schedule's zone.
     static let calendar: Calendar = {
         var calendar = Calendar(identifier: .gregorian)
-        calendar.timeZone = EmploymentTerms.scheduleTimeZone
+        calendar.timeZone = TimeZone(identifier: "America/Los_Angeles")!
         return calendar
     }()
 

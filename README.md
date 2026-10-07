@@ -251,7 +251,7 @@ The app registers for remote notifications on launch (`AppDelegate`) and saves t
 - **Clock-out report required**: the user must enter text before clocking out. The automatic clock-outs (8-hour cap, scheduled end) fill in a report for them.
 - **Reports feed**: shows all users' reports. No filtering by date or person.
 - **Offline**: no explicit offline queue. Firestore calls may fail silently in some ViewModels.
-- **Schedule times**: always US Pacific. Showing employees their profile country's timezone is a TODO (`EmploymentTerms.scheduleTimeZone`).
+- **Schedule time zones**: each schedule has its own time zone (`timeZone` on `users/{uid}/employment/terms`), picked in the schedule editor; schedules saved without one are US Pacific. Pay days and months are always Pacific.
 - **Payouts**: only admins can mark a month paid. The employee doing it is a TODO (`PayoutRecord`).
 - **Time-off requests**: employees can send them, but there is no admin screen to approve or deny them yet, and admins aren't notified. For now an admin sets `status` to `approved` / `denied` on `users/{uid}/timeOffRequests/{id}` directly. An approved request doesn't change the weekly schedule or the clock reminders from `enforceClockSchedules`.
 - **Overnight shifts**: a scheduled shift can't cross midnight (end must be after start).
@@ -266,8 +266,8 @@ The app registers for remote notifications on launch (`AppDelegate`) and saves t
 |--------|---------|
 | My Schedule | `ScheduleView` shows the employee's wage, last month's paycheck (frozen if paid, otherwise estimated) and upcoming shifts, and lets them request a day off or a shortened day (`TimeOffRequestSheet` → `users/{uid}/timeOffRequests`) |
 | Admin Tools | Admin-only screen from Profile: clock notifications, employees, employee history, archived projects, project mains |
-| Wage log | Wages are logged in `users/{uid}/wageHistory` with the date logged. The first wage applies right away; later changes start on the 1st of the next month |
-| Pay & schedule | `EmployeeDetailView`: wage, pay notes, weekly schedule (US Pacific) |
+| Wage log | Wages are logged in `users/{uid}/wageHistory` with the date logged. Each wage has its own currency (USD, EUR, GBP, JPY, CNY, …; older entries are USD). The first wage applies right away; later changes start on the 1st of the next month |
+| Pay & schedule | `EmployeeDetailView`: wage, pay notes, weekly schedule and its time zone |
 | Monthly payouts | Per-month estimates at that month's wage. **Mark Paid** adds bonus / deduction / note and locks the numbers in `users/{uid}/payouts`. Tap a month for a calendar of hours (and hourly earnings) per day |
 | Schedule enforcement | `enforceClockSchedules`: clock-in reminder at +15m, clock-out reminder at +30m, auto clock-out at +90m (recorded at the scheduled end). Clock-in within 30m of start is recorded as the start |
 | History | Moved behind **History ›** (own) and **Employee History ›** (admins) |
@@ -314,12 +314,12 @@ MainBase/
 ├── Models/
 │   ├── AppTab.swift                     ← Tab enum (clockIn, projects, operations)
 │   ├── EmployeeEntry.swift              ← Admin employee list row
-│   ├── EmploymentTerms.swift            ← Pay notes, weekly schedule, Pacific shift math
+│   ├── EmploymentTerms.swift            ← Pay notes, weekly schedule and its time zone, shift math
 │   ├── HistoryEntry.swift               ← Clock-out history row
 │   ├── NotificationType.swift           ← Notification + clock action enums (mirrors functions)
 │   ├── PayoutRecord.swift               ← Monthly payout: base pay + bonus − deduction, note
 │   ├── TimeOffRequest.swift             ← Day-off / shortened-day request (pending / approved / denied)
-│   ├── WageChange.swift                 ← PayType, WageChange (log entry), WageHistory (effective-date rules)
+│   ├── WageChange.swift                 ← PayType, PayCurrency, WageChange (log entry), WageHistory (effective-date rules)
 │   ├── Project*.swift, OperationItem…   ← Projects, tasks, chat, expenses, mains
 │   ├── Report.swift, ReportChatMessage.swift
 │   ├── TeamMember.swift, AssignableUser.swift
@@ -344,6 +344,7 @@ MainBase/
 │   └── WageHistoryViewModel.swift       ← Wage log for one employee
 │
 ├── Services/
+│   ├── ExchangeRates.swift              ← Daily USD rates (Frankfurter/ECB) for admin "≈ $" figures
 │   └── PushNotificationService.swift    ← Saves FCM token
 │
 ├── Views/
@@ -517,9 +518,9 @@ firestore/
     │   ├── terms                     ← Admin-set pay notes & schedule (see Admin tools section)
     │   └── scheduleState             ← enforceClockSchedules reminder bookkeeping
     │
-    ├── wageHistory/  {yyyy-MM}       ← Wage log: payType, rate, changedAt (month = start date)
+    ├── wageHistory/  {yyyy-MM}       ← Wage log: payType, rate, currency, changedAt (month = start date)
     │
-    ├── payouts/  {yyyy-MM}           ← Months marked paid (frozen hours/rate/base, bonus, deduction, note)
+    ├── payouts/  {yyyy-MM}           ← Months marked paid (frozen hours/rate/currency/base, USD rate, bonus, deduction, note)
     │
     ├── timeOffRequests/  {requestId} ← Employee's day-off / shortened-day requests
     │   ├── kind: "dayOff" | "shortenedDay"
@@ -599,7 +600,7 @@ Admins open **Profile → Admin Tools** to manage employees. Tapping an employee
 
 The `enforceClockSchedules` Cloud Function then sends clock-in/clock-out reminders and automatically clocks people out based on that schedule.
 
-**All schedule times and pay months are US Pacific (`America/Los_Angeles`).**
+**Each schedule's times are in its own time zone** (`timeZone` on the terms doc, an IANA id like `Asia/Tokyo`; Pacific if unset). The admin or the employee picks it in the schedule editor, and `enforceClockSchedules` enforces the shifts in that zone, so a 9:00 AM Tokyo shift stays 9:00 AM Tokyo through US daylight saving changes. **Pay days and months are always US Pacific (`America/Los_Angeles`).**
 
 ### What employees see (My Schedule)
 
@@ -994,7 +995,7 @@ flowchart TB
   "cloudFunctions": {
     "enforceClockSchedules": {
       "trigger": "every 5 minutes",
-      "timeZone": "America/Los_Angeles (functions/scheduleTime.js)",
+      "timeZone": "the terms doc's timeZone, else America/Los_Angeles (functions/scheduleTime.js)",
       "rules": {
         "start + 15m, not clocked in": "push \"Did you forget to clock in?\"",
         "end + 30m, still clocked in": "push \"Did you forget to clock out and write your report?\"",

@@ -1,12 +1,23 @@
 // Time zone helpers for the scheduled clock enforcement in index.js. Schedules are stored
-// as minutes since midnight in SCHEDULE_TIME_ZONE (MainBase/Models/EmploymentTerms.swift).
+// as minutes since midnight in their own zone, the terms doc's `timeZone`
+// (MainBase/Models/EmploymentTerms.swift), and enforced in that zone.
 
-// Every schedule is set, stored and enforced in US Pacific time, for all employees. Mirrors
-// EmploymentTerms.scheduleTimeZone in the app.
-// TODO (not implemented yet): employees should see their schedule in the time zone of the
-// `country` on their profile; see the note on EmploymentTerms.scheduleTimeZone. Enforcement
-// here stays in Pacific either way.
-const SCHEDULE_TIME_ZONE = "America/Los_Angeles";
+// The zone of a schedule saved without one (all schedules from before per-employee zones).
+// Mirrors EmploymentTerms.defaultTimeZone in the app. Pay months stay Pacific, so this is
+// also the zone for pay-related dates (e.g. monthly summaries).
+const DEFAULT_SCHEDULE_TIME_ZONE = "America/Los_Angeles";
+
+// The terms doc's time zone if it's a valid IANA zone, else the default.
+function scheduleTimeZone(terms) {
+  const timeZone = terms?.timeZone;
+  if (typeof timeZone !== "string" || !timeZone) return DEFAULT_SCHEDULE_TIME_ZONE;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone });
+    return timeZone;
+  } catch (error) {
+    return DEFAULT_SCHEDULE_TIME_ZONE;
+  }
+}
 
 const WEEKDAYS = ["sunday", "monday", "tuesday", "wednesday", "thursday", "friday", "saturday"];
 
@@ -49,11 +60,11 @@ function zonedTimeToDate(year, month, day, minutes, timeZone) {
   return new Date(result);
 }
 
-// Scheduled shifts for yesterday and today in Pacific time (yesterday first), so a shift
-// ending late at night is still handled after midnight. Shifts never cross midnight:
+// Scheduled shifts for yesterday and today in the schedule's zone (yesterday first), so a
+// shift ending late at night is still handled after midnight. Shifts never cross midnight:
 // the app requires end > start.
 function recentShifts(terms, now) {
-  const timeZone = SCHEDULE_TIME_ZONE;
+  const timeZone = scheduleTimeZone(terms);
   const schedule = terms.schedule || {};
   const today = zonedParts(now, timeZone);
   const shifts = [];
@@ -77,4 +88,4 @@ function recentShifts(terms, now) {
   return shifts;
 }
 
-module.exports = { recentShifts, zonedTimeToDate, SCHEDULE_TIME_ZONE };
+module.exports = { recentShifts, zonedTimeToDate, scheduleTimeZone, DEFAULT_SCHEDULE_TIME_ZONE };

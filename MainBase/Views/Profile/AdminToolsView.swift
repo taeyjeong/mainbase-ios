@@ -2,7 +2,8 @@ import SwiftUI
 
 /// Admin-only screen, pushed from ProfileSheetView's "Admin Tools" button. Collects everything
 /// only admins can see: clock notification preference, employee list (tap through to
-/// EmployeeDetailView for pay and schedule), employee history, archived projects, and project mains.
+/// EmployeeDetailView for pay and schedule), employee history, archived projects, operations diagrams, Gemini, and project mains.
+/// askGemini also checks admin server-side.
 struct AdminToolsView: View {
     @ObservedObject var profileVM: ProfileViewModel
     @StateObject private var adminVM = AdminEmployeesViewModel()
@@ -17,6 +18,8 @@ struct AdminToolsView: View {
                 employeesSection
                 employeeHistoryButton
                 archivedProjectsButton
+                operationsButton
+                geminiButton
                 ManageProjectMainsView()
             }
             .padding(.horizontal, 20)
@@ -149,6 +152,32 @@ struct AdminToolsView: View {
                 icon: "archivebox",
                 title: "Archived Projects",
                 subtitle: "View and restore archived projects"
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var operationsButton: some View {
+        NavigationLink {
+            OperationsDiagramsView()
+        } label: {
+            ProfileNavRow(
+                icon: "map.fill",
+                title: "Operations",
+                subtitle: "Workflow, user flow, and database diagrams"
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var geminiButton: some View {
+        NavigationLink {
+            GeminiView()
+        } label: {
+            ProfileNavRow(
+                icon: "sparkles",
+                title: "Gemini",
+                subtitle: "Ask Google Gemini anything"
             )
         }
         .buttonStyle(.plain)

@@ -2,9 +2,9 @@ import FirebaseAuth
 import SwiftUI
 
 /// The signed-in user's own work schedule, opened from the calendar icon in TimeTrackerView's
-/// header. The weekly schedule is set by an admin in Pacific time (EmploymentTerms); this lists
-/// the shifts of the next 7 Pacific days converted to the device's time zone, so a shift can
-/// land on a different local day than its Pacific weekday. Above the shifts: the employee's
+/// header. The weekly schedule is set in its own time zone (EmploymentTerms.timeZone); this
+/// lists the shifts of the schedule's next 7 days converted to the device's time zone, so away
+/// from that zone a shift can land on a different local day than its scheduled weekday. Above the shifts: the employee's
 /// current wage (WageHistory), last month's paycheck (paid amount, or an estimate until an
 /// admin marks it paid) and a button to request a day off or a shortened day.
 struct ScheduleView: View {
@@ -19,7 +19,6 @@ struct ScheduleView: View {
     private static let daysShown = 7
     /// How far ahead a day off or shortened day can be requested.
     private static let requestableDays = 60
-    private static let currencyFormat = FloatingPointFormatStyle<Double>.Currency(code: "USD")
 
     private static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -37,7 +36,8 @@ struct ScheduleView: View {
         TimeZone.current.abbreviation() ?? TimeZone.current.identifier
     }
 
-    /// Scheduled shifts from today through the next 6 Pacific days, including one in progress.
+    /// Scheduled shifts from today through the next 6 days in the schedule's zone, including one
+    /// in progress.
     private var upcomingShifts: [DateInterval] {
         termsVM.terms.upcomingShifts(days: Self.daysShown)
     }
@@ -137,13 +137,13 @@ struct ScheduleView: View {
         return HStack(spacing: 12) {
             payCard(
                 title: wage?.payType.rateLabel ?? "Wage",
-                value: wage?.rate.formatted(Self.currencyFormat),
+                value: wage.map { $0.rate.formatted($0.currency.format) },
                 detail: wage?.payType.rateUnit ?? "",
                 isLoading: wageVM.isLoading
             )
             payCard(
                 title: "Last month's paycheck",
-                value: payout?.amount?.formatted(Self.currencyFormat),
+                value: payout.flatMap { record in record.amount?.formatted(record.currency.format) },
                 detail: payout.map { "\($0.monthTitle) · \($0.isPaid ? "Paid" : "Estimated")" } ?? "",
                 isLoading: wageVM.isLoading || payoutsVM.isLoading
             )

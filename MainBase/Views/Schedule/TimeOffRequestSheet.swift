@@ -88,13 +88,6 @@ struct TimeOffRequestSheet: View {
 
     private func form(for shift: DateInterval) -> some View {
         VStack(alignment: .leading, spacing: 16) {
-            Picker("Type", selection: $kind) {
-                ForEach(TimeOffRequest.Kind.allCases) { kind in
-                    Text(kind.displayName).tag(kind)
-                }
-            }
-            .pickerStyle(.segmented)
-
             HStack {
                 Text("Shift")
                     .font(.system(size: 14, weight: .medium))
@@ -107,6 +100,13 @@ struct TimeOffRequestSheet: View {
                 }
                 .pickerStyle(.menu)
             }
+
+            Picker("Type", selection: $kind) {
+                ForEach(TimeOffRequest.Kind.allCases) { kind in
+                    Text(kind.displayName).tag(kind)
+                }
+            }
+            .pickerStyle(.segmented)
 
             if kind == .shortenedDay {
                 Divider()

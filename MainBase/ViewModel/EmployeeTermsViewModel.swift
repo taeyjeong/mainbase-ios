@@ -56,10 +56,10 @@ final class EmployeeTermsViewModel: ObservableObject {
         }
     }
 
-    /// The employee's own edit (EditMyScheduleSheet). Writes only the schedule, merged into the
-    /// terms doc so the admin's pay notes are untouched; firestore.rules limits owners to these
-    /// fields. Returns an error message, or nil once saved.
-    func saveSchedule(_ schedule: [Weekday: WorkDay]) async -> String? {
+    /// The employee's own edit (EditMyScheduleSheet). Writes only the schedule and its time
+    /// zone, merged into the terms doc so the admin's pay notes are untouched; firestore.rules
+    /// limits owners to these fields. Returns an error message, or nil once saved.
+    func saveSchedule(_ schedule: [Weekday: WorkDay], timeZoneId: String) async -> String? {
         if let invalidDay = EmploymentTerms.invalidDay(in: schedule) {
             return "\(invalidDay.displayName)'s end time must be after its start time."
         }
@@ -67,9 +67,11 @@ final class EmployeeTermsViewModel: ObservableObject {
         defer { isSaving = false }
         var updated = terms
         updated.schedule = schedule
+        updated.timeZoneId = timeZoneId
         do {
             try await termsRef.setData([
                 "schedule": updated.firestoreData["schedule"] ?? [:],
+                "timeZone": updated.timeZoneId,
                 "updatedAt": FieldValue.serverTimestamp(),
                 "updatedByEmail": Auth.auth().currentUser?.email ?? "",
             ], merge: true)

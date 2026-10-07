@@ -27,6 +27,45 @@ enum PayType: String, CaseIterable {
     }
 }
 
+/// The currency a wage is paid in, stored as its ISO 4217 code. Wages logged before currencies
+/// existed have none and are USD.
+enum PayCurrency: String, CaseIterable, Identifiable {
+    case usd = "USD"
+    case eur = "EUR"
+    case gbp = "GBP"
+    case jpy = "JPY"
+    case cny = "CNY"
+    case krw = "KRW"
+    case cad = "CAD"
+    case aud = "AUD"
+    case mxn = "MXN"
+    case inr = "INR"
+    case php = "PHP"
+    case chf = "CHF"
+
+    var id: String { rawValue }
+
+    init(code: String?) {
+        self = code.flatMap(PayCurrency.init(rawValue:)) ?? .usd
+    }
+
+    /// "Japanese Yen (JPY)"
+    var displayName: String {
+        let name = Locale.current.localizedString(forCurrencyCode: rawValue) ?? rawValue
+        return "\(name) (\(rawValue))"
+    }
+
+    /// "$", "€", "¥", … as the device's locale writes it.
+    var symbol: String {
+        let formatter = NumberFormatter()
+        formatter.numberStyle = .currency
+        formatter.currencyCode = rawValue
+        return formatter.currencySymbol
+    }
+
+    var format: FloatingPointFormatStyle<Double>.Currency { .currency(code: rawValue) }
+}
+
 /// One entry in an employee's wage log, stored at users/{uid}/wageHistory/{id}. Logged by an
 /// admin from EmployeeDetailView; entries are never edited, only added (or an upcoming one
 /// cancelled), so the log is a record of every wage the employee has had.
@@ -35,16 +74,18 @@ struct WageChange: Identifiable, Equatable {
     /// there's at most one change per month (logging again before it starts replaces it).
     let id: String
     let payType: PayType
-    /// Dollars per hour for hourly, dollars per month for salary.
+    /// Amount per hour for hourly, per month for salary, in `currency`.
     let rate: Double
+    let currency: PayCurrency
     /// When the admin logged the change.
     let changedAt: Date
     let changedByEmail: String
 
-    init(id: String, payType: PayType, rate: Double, changedAt: Date, changedByEmail: String) {
+    init(id: String, payType: PayType, rate: Double, currency: PayCurrency, changedAt: Date, changedByEmail: String) {
         self.id = id
         self.payType = payType
         self.rate = rate
+        self.currency = currency
         self.changedAt = changedAt
         self.changedByEmail = changedByEmail
     }
@@ -56,6 +97,7 @@ struct WageChange: Identifiable, Equatable {
         self.id = id
         self.payType = payType
         self.rate = rate
+        currency = PayCurrency(code: data["currency"] as? String)
         changedAt = (data["changedAt"] as? Timestamp)?.dateValue() ?? Date()
         changedByEmail = data["changedByEmail"] as? String ?? ""
     }
@@ -64,6 +106,7 @@ struct WageChange: Identifiable, Equatable {
         [
             "payType": payType.rawValue,
             "rate": rate,
+            "currency": currency.rawValue,
             "effectiveMonth": id,
             "changedAt": Timestamp(date: changedAt),
             "changedByEmail": changedByEmail,
@@ -72,7 +115,7 @@ struct WageChange: Identifiable, Equatable {
 
     /// "Hourly · $25.00 / hour"
     var summary: String {
-        "\(payType.displayName) · \(rate.formatted(.currency(code: "USD"))) \(payType.rateUnit)"
+        "\(payType.displayName) · \(rate.formatted(currency.format)) \(payType.rateUnit)"
     }
 
     /// "Oct 1, 2026", the 1st of the effective month.

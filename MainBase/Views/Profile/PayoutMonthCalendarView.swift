@@ -16,6 +16,7 @@ struct PayoutMonthCalendarView: View {
     /// "yyyy-MM-dd" of the tapped day.
     @State private var selectedDayKey: String?
     @State private var shiftToEdit: HistoryEntry?
+    @ObservedObject private var rates = ExchangeRates.shared
 
     private var record: PayoutRecord {
         payoutsVM.record(forMonth: monthKey, using: wages)
@@ -51,8 +52,8 @@ struct PayoutMonthCalendarView: View {
         return formatter
     }()
 
-    private static let currencyFormat = FloatingPointFormatStyle<Double>.Currency(code: "USD")
-    private static let cellCurrencyFormat = currencyFormat.precision(.fractionLength(0))
+    private var currencyFormat: FloatingPointFormatStyle<Double>.Currency { record.currency.format }
+    private var cellCurrencyFormat: FloatingPointFormatStyle<Double>.Currency { currencyFormat.precision(.fractionLength(0)) }
     private static let columns = Array(repeating: GridItem(.flexible(), spacing: 4), count: 7)
 
     /// Sunday-first weekday symbols ("S", "M", …), matching PayoutRecord.calendar.
@@ -72,6 +73,11 @@ struct PayoutMonthCalendarView: View {
             calendar.date(byAdding: .day, value: day - 1, to: monthStart)
         }
         return blanks + dates
+    }
+
+    /// "≈ $…" at the rate frozen when the month was paid, or today's for an estimate.
+    private func dollarsText(_ amount: Double?) -> String? {
+        rates.dollarsText(amount, in: record.currency, rate: record.usdRate)
     }
 
     private var showsEarnings: Bool {
@@ -115,18 +121,18 @@ struct PayoutMonthCalendarView: View {
             summaryRow("Hours worked", record.hoursWorked.formatted(.number.precision(.fractionLength(0...1))) + " hrs")
             switch record.payType {
             case .hourly:
-                summaryRow("Hourly rate", record.rate?.formatted(Self.currencyFormat) ?? "Not set")
-                summaryRow("Earned", record.basePay?.formatted(Self.currencyFormat) ?? "—")
+                summaryRow("Hourly rate", record.rate?.formatted(currencyFormat) ?? "Not set", dollars: dollarsText(record.rate))
+                summaryRow("Earned", record.basePay?.formatted(currencyFormat) ?? "—", dollars: dollarsText(record.basePay))
             case .salary:
-                summaryRow("Monthly salary", record.basePay?.formatted(Self.currencyFormat) ?? "Not set")
+                summaryRow("Monthly salary", record.basePay?.formatted(currencyFormat) ?? "Not set", dollars: dollarsText(record.basePay))
             }
             if record.bonus > 0 {
-                summaryRow("Bonus", "+" + record.bonus.formatted(Self.currencyFormat))
+                summaryRow("Bonus", "+" + record.bonus.formatted(currencyFormat))
             }
             if record.deduction > 0 {
-                summaryRow("Deduction", "−" + record.deduction.formatted(Self.currencyFormat))
+                summaryRow("Deduction", "−" + record.deduction.formatted(currencyFormat))
             }
-            summaryRow("Total", record.amount?.formatted(Self.currencyFormat) ?? "—", emphasized: true)
+            summaryRow("Total", record.amount?.formatted(currencyFormat) ?? "—", dollars: dollarsText(record.amount), emphasized: true)
             if !record.note.isEmpty {
                 Text(record.note)
                     .font(.system(size: 13))
@@ -142,15 +148,23 @@ struct PayoutMonthCalendarView: View {
         )
     }
 
-    private func summaryRow(_ label: String, _ value: String, emphasized: Bool = false) -> some View {
-        HStack {
+    /// `dollars` is the "≈ $…" figure shown under a non-USD value (ExchangeRates).
+    private func summaryRow(_ label: String, _ value: String, dollars: String? = nil, emphasized: Bool = false) -> some View {
+        HStack(alignment: .firstTextBaseline) {
             Text(label)
                 .font(.system(size: 14))
                 .foregroundColor(AppColors.textSecondary)
             Spacer()
-            Text(value)
-                .font(.system(size: emphasized ? 16 : 14, weight: emphasized ? .semibold : .medium))
-                .foregroundColor(AppColors.text)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(value)
+                    .font(.system(size: emphasized ? 16 : 14, weight: emphasized ? .semibold : .medium))
+                    .foregroundColor(AppColors.text)
+                if let dollars {
+                    Text(dollars)
+                        .font(.system(size: 12))
+                        .foregroundColor(AppColors.textSecondary)
+                }
+            }
         }
     }
 
@@ -207,7 +221,7 @@ struct PayoutMonthCalendarView: View {
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundColor(AppColors.primary)
                     if showsEarnings, let rate = record.rate {
-                        Text((hours * rate).formatted(Self.cellCurrencyFormat))
+                        Text((hours * rate).formatted(cellCurrencyFormat))
                             .font(.system(size: 10))
                             .foregroundColor(AppColors.textSecondary)
                             .lineLimit(1)
@@ -246,7 +260,7 @@ struct PayoutMonthCalendarView: View {
                         .foregroundColor(AppColors.primary)
                 }
                 if showsEarnings, let rate = record.rate, hours > 0 {
-                    Text("Earned \((hours * rate).formatted(Self.currencyFormat)) at \(rate.formatted(Self.currencyFormat)) / hour")
+                    Text("Earned \((hours * rate).formatted(currencyFormat)) at \(rate.formatted(currencyFormat)) / hour")
                         .font(.system(size: 12))
                         .foregroundColor(AppColors.textSecondary)
                 }

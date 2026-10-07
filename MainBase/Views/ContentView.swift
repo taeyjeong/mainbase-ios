@@ -21,19 +21,15 @@ struct ContentView: View {
                         .tabItem { Label("Clock In", systemImage: "clock") }
                         .tag(AppTab.clockIn)
 
-                    // Admin-only tabs. askGemini also checks admin server-side.
+                    // Admin-only tabs. Operations and Gemini live in Admin Tools.
                     if trackerVM.isAdmin {
                         ProjectsListView()
                             .tabItem { Label("Projects", systemImage: "folder.fill") }
                             .tag(AppTab.projects)
 
-                        OperationsDiagramsView()
-                            .tabItem { Label("Operations", systemImage: "map.fill") }
-                            .tag(AppTab.operations)
-
-                        GeminiView()
-                            .tabItem { Label("Gemini", systemImage: "sparkles") }
-                            .tag(AppTab.gemini)
+                        Projects2View()
+                            .tabItem { Label("Projects2", systemImage: "circle.hexagonpath") }
+                            .tag(AppTab.projects2)
                     }
                 }
                 .onChange(of: trackerVM.isClockedIn) { _, isClockedIn in

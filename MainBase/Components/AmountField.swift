@@ -1,12 +1,13 @@
 import SwiftUI
 
-/// Titled "$ [0.00] unit" input box for dollar amounts. Only accepts digits and one decimal
+/// Titled "$ [0.00] unit" input box for money amounts, with the currency's symbol in front. Only accepts digits and one decimal
 /// point with up to two digits after it. Bound to a String (parse with `Double(text)`) so a
 /// value typed just before tapping a button isn't lost to an uncommitted number field.
 struct AmountField: View {
     let title: String
     @Binding var text: String
     var unit: String?
+    var symbol = "$"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -14,7 +15,7 @@ struct AmountField: View {
                 .font(.system(size: 14, weight: .medium))
                 .foregroundColor(AppColors.text)
             HStack(spacing: 6) {
-                Text("$")
+                Text(symbol)
                     .foregroundColor(AppColors.textSecondary)
                 TextField("0.00", text: $text)
                     .keyboardType(.decimalPad)
